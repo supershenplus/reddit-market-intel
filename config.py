@@ -17,6 +17,11 @@ REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET", "")
 REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "MarketIntel/1.0")
 
+# RAG classifier
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+CHROMA_PATH = str(DATA_DIR / "chroma")
+SIMILARITY_THRESHOLD = 0.35   # cosine similarity floor; tune after benchmarking
+
 # Rate limiting
 JSON_API_DELAY = 1.0          # seconds between JSON API requests
 JSON_API_JITTER = (0.5, 1.5)  # random jitter range (seconds)

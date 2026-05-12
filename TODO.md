@@ -19,6 +19,7 @@
 - [ ] **W2-3** Define pain-point archetype queries (seed phrases per category: seeking_tool, frustrated, would_pay, etc.)
 - [ ] **W2-4** Benchmark RAG hit rate vs regex on same 250-post corpus — target >15% (vs current 1.6%)
 - [ ] **W2-5** Keep regex as fallback or drop once RAG validated
+- [ ] **W2-6** Scale-out path: swap ChromaDB → Pinecone/pgvector if corpus exceeds 100k posts or multi-user needed
 
 ## Hardening
 
