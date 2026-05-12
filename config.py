@@ -41,15 +41,50 @@ SEED_SUBREDDITS = {
     "freelance": ["freelance", "DigitalNomad", "WorkOnline"],
 }
 
-# Scoring weights
+# Scoring weights (must sum to 1.0)
 SCORING_WEIGHTS = {
-    "reddit_score": 0.20,
-    "sentiment_intensity": 0.20,
-    "validation_score": 0.20,
-    "cross_sub_multiplier": 0.15,
-    "intent_weight": 0.15,
-    "recency_weight": 0.10,
+    "reddit_score": 0.15,
+    "sentiment_intensity": 0.15,
+    "validation_score": 0.15,
+    "cross_sub_multiplier": 0.10,
+    "intent_weight": 0.10,
+    "recency_weight": 0.05,
+    "monetization_score": 0.15,
+    "solution_simplicity": 0.10,
+    "market_size_score": 0.05,
 }
+
+# Market signal keywords
+MONETIZATION_HIGH_KEYWORDS = [
+    r"\bwould pay\b", r"\bwilling to pay\b", r"\bpay for\b", r"\bworth paying\b",
+    r"\b\$\d+\s*(?:/mo|/month|per month|/year)\b", r"\bROI\b", r"\bB2B\b",
+    r"\benterprise\b", r"\bsave.*time.*money\b", r"\bcharge clients\b",
+    r"\bbusiness expense\b", r"\bbudget for\b",
+]
+MONETIZATION_LOW_KEYWORDS = [
+    r"\bfree\b", r"\bopen.?source\b", r"\bcan't afford\b", r"\btoo expensive\b",
+    r"\bno budget\b", r"\bjust a hobby\b",
+]
+MONETIZATION_HIGH_SUBREDDITS = {
+    "smallbusiness", "Entrepreneur", "SaaS", "startups", "freelance",
+    "AskEntrepreneur", "microsaas", "ecommerce",
+}
+MONETIZATION_LOW_SUBREDDITS = {
+    "productivity", "digitalnomad", "nocode", "SideProject",
+}
+
+SIMPLICITY_HIGH_KEYWORDS = [
+    r"\bstatic site\b", r"\bdirectory\b", r"\baggregator\b", r"\bnewsletter\b",
+    r"\bsimple form\b", r"\bjust needs?\b", r"\bone.?page\b", r"\blanding page\b",
+    r"\bno.?code\b", r"\bsimple webapp\b", r"\bbasic tool\b",
+]
+SIMPLICITY_LOW_KEYWORDS = [
+    r"\breal.?time\b", r"\bmulti.?tenant\b", r"\benterprise integration\b",
+    r"\bAPI sync\b", r"\bmachine learning\b", r"\bcomplex\b", r"\bscalable infra\b",
+    r"\bmicroservices\b", r"\breal.?time collaboration\b",
+]
+
+MARKET_SIZE_CEILING_SUBSCRIBERS = 10_000_000
 
 INTENT_WEIGHTS = {
     "would_pay": 1.0,

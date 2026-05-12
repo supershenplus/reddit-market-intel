@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS pain_points (
     cross_sub_count INTEGER DEFAULT 1,
     cluster_id INTEGER,
     reviewed INTEGER DEFAULT 0,
+    monetization_score REAL DEFAULT 0.0,
+    solution_simplicity REAL DEFAULT 0.5,
+    market_size_score REAL DEFAULT 0.0,
     FOREIGN KEY (post_id) REFERENCES posts(id)
 );
 

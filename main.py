@@ -17,6 +17,11 @@ from scraper.comments import classify_comment
 from analysis.classifier import PainPointClassifier
 from analysis.validators import compute_validation_score
 from analysis.scorer import OpportunityScorer
+from analysis.market_signals import (
+    compute_monetization_score,
+    compute_solution_simplicity,
+    compute_market_size_score,
+)
 from analysis.clustering import PainPointClusterer
 from discovery.subreddit_finder import SubredditFinder
 from export.report import ReportGenerator
@@ -135,6 +140,13 @@ def analyze():
             validation = compute_validation_score(comments)
             recency = scorer.compute_recency_weight(post["created_utc"])
 
+            # Market signals
+            sub_info = db.get_subreddit_info(post["subreddit"])
+            subscribers = sub_info.get("subscribers", 0) if sub_info else 0
+            mono = compute_monetization_score(post["title"] or "", post["body"] or "", post["subreddit"])
+            simplicity = compute_solution_simplicity(post["title"] or "", post["body"] or "")
+            mkt_size = compute_market_size_score(subscribers, cross_sub_count=1)
+
             # Compute opportunity score
             opp_score = scorer.score(
                 reddit_score=post["score"],
@@ -143,6 +155,9 @@ def analyze():
                 cross_sub_count=1,  # updated during clustering
                 intent_category=result["intent_category"],
                 created_utc=post["created_utc"],
+                monetization_score=mono,
+                solution_simplicity=simplicity,
+                market_size_score=mkt_size,
             )
 
             pain_point = {
@@ -155,6 +170,9 @@ def analyze():
                 "recency_weight": recency,
                 "cross_sub_count": 1,
                 "cluster_id": None,
+                "monetization_score": mono,
+                "solution_simplicity": simplicity,
+                "market_size_score": mkt_size,
             }
             db.insert_pain_point(pain_point)
             matched += 1
@@ -177,6 +195,9 @@ def analyze():
             cross_sub_count=pp["cross_sub_count"] or 1,
             intent_category=pp["intent_category"] or "feature_request",
             created_utc=pp["created_utc"] or 0,
+            monetization_score=pp.get("monetization_score") or 0.5,
+            solution_simplicity=pp.get("solution_simplicity") or 0.5,
+            market_size_score=pp.get("market_size_score") or 0.3,
         )
         db.update_pain_point_score(pp["id"], new_score)
 

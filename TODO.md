@@ -21,6 +21,28 @@
 - [ ] **W2-5** Keep regex as fallback or drop once RAG validated
 - [ ] **W2-6** Scale-out path: swap ChromaDB → Pinecone/pgvector if corpus exceeds 100k posts or multi-user needed
 
+## W3 — Scoring matrix v1 (new dimensions)
+
+- [ ] **W3-1** Add `monetization_score`, `solution_simplicity`, `market_size_score` columns to schema + migrate existing DB
+- [ ] **W3-2** Build `analysis/market_signals.py` — heuristic scorers for all 3 dimensions
+- [ ] **W3-3** Rebalance SCORING_WEIGHTS in config.py (new dims get 0.30 total weight)
+- [ ] **W3-4** Wire new signals into scorer + analyze pipeline
+- [ ] **W3-5** Add tests in `tests/test_market_signals.py`
+- [ ] **W3-6** Re-analyze corpus, verify report surfaces high-monetization + simple-solution opps first
+
+## W4 — Scoring matrix v2 (scope expansion — tons missed in v1)
+
+- [ ] **W4-1** Competition density signal — count how many products already solve this (search comment mentions)
+- [ ] **W4-2** Urgency signal — "asap", "right now", "blocking me", "losing money" → higher score
+- [ ] **W4-3** Specificity signal — vague pain ("productivity") vs specific ("need tool to auto-send invoice after Calendly booking")
+- [ ] **W4-4** Regulatory/compliance signal — HIPAA, GDPR, SOC2 mentions → higher willingness to pay
+- [ ] **W4-5** Geographic signal — US/EU-centric = larger addressable market
+- [ ] **W4-6** Frequency signal — "every day", "constantly", "weekly", vs "once in a while"
+- [ ] **W4-7** DIY evidence — "I built a spreadsheet", "I use Zapier for this" → validated gap, someone's hacking around it
+- [ ] **W4-8** Price anchor signal — explicit $ amounts mentioned → monetization validation
+- [ ] **W4-9** Trending detection improvement — weekly post-count delta per cluster, not just boolean flag
+- [ ] **W4-10** Cluster quality score — single-post clusters are noise; penalize until 3+ posts agree
+
 ## Hardening
 
 > Severity-tagged findings from EOW review. Fix Critical before next sprint.

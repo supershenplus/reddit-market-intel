@@ -86,6 +86,9 @@ class TestPostCRUD:
             "recency_weight": 0.9,
             "cross_sub_count": 1,
             "cluster_id": None,
+            "monetization_score": 0.5,
+            "solution_simplicity": 0.5,
+            "market_size_score": 0.3,
         })
         assert db.get_posts_without_pain_points() == []
 
@@ -126,6 +129,9 @@ class TestPainPointCRUD:
             "recency_weight": 0.9,
             "cross_sub_count": 1,
             "cluster_id": None,
+            "monetization_score": 0.5,
+            "solution_simplicity": 0.5,
+            "market_size_score": 0.3,
         })
 
     def test_insert_and_get_all_pain_points(self, db):

@@ -23,6 +23,23 @@ class Database:
         schema_path = Path(__file__).parent.parent / "schema.sql"
         with open(schema_path) as f:
             self.conn.executescript(f.read())
+        self._migrate_columns()
+
+    def _migrate_columns(self):
+        """Add new columns to existing DBs without losing data."""
+        new_cols = [
+            ("monetization_score", "REAL", "0.0"),
+            ("solution_simplicity", "REAL", "0.5"),
+            ("market_size_score", "REAL", "0.0"),
+        ]
+        for name, col_type, default in new_cols:
+            try:
+                self.conn.execute(
+                    f"ALTER TABLE pain_points ADD COLUMN {name} {col_type} DEFAULT {default}"
+                )
+                self.conn.commit()
+            except Exception:
+                pass  # column already exists
 
     def close(self):
         self.conn.close()
@@ -97,9 +114,11 @@ class Database:
     def insert_pain_point(self, pain_point: dict):
         self.conn.execute(
             """INSERT INTO pain_points (post_id, matched_patterns, intent_category, opportunity_score,
-               sentiment_intensity, validation_score, recency_weight, cross_sub_count, cluster_id)
+               sentiment_intensity, validation_score, recency_weight, cross_sub_count, cluster_id,
+               monetization_score, solution_simplicity, market_size_score)
                VALUES (:post_id, :matched_patterns, :intent_category, :opportunity_score,
-               :sentiment_intensity, :validation_score, :recency_weight, :cross_sub_count, :cluster_id)""",
+               :sentiment_intensity, :validation_score, :recency_weight, :cross_sub_count, :cluster_id,
+               :monetization_score, :solution_simplicity, :market_size_score)""",
             pain_point,
         )
         self.conn.commit()
@@ -161,6 +180,11 @@ class Database:
             sub,
         )
         self.conn.commit()
+
+    def get_subreddit_info(self, name: str) -> Optional[dict]:
+        cur = self.conn.execute("SELECT * FROM subreddits WHERE name = ?", (name,))
+        row = cur.fetchone()
+        return dict(row) if row else None
 
     def get_active_subreddits(self, category: Optional[str] = None) -> list[dict]:
         if category:

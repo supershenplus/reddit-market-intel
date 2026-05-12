@@ -25,6 +25,9 @@ class OpportunityScorer:
         cross_sub_count: int,
         intent_category: str,
         created_utc: float,
+        monetization_score: float = 0.5,
+        solution_simplicity: float = 0.5,
+        market_size_score: float = 0.3,
     ) -> float:
         """Compute composite opportunity score.
 
@@ -53,6 +56,9 @@ class OpportunityScorer:
             + w["cross_sub_multiplier"] * cross_sub_mult
             + w["intent_weight"] * intent_w
             + w["recency_weight"] * recency
+            + w["monetization_score"] * monetization_score
+            + w["solution_simplicity"] * solution_simplicity
+            + w["market_size_score"] * market_size_score
         )
 
         return max(0.0, min(1.0, score))
