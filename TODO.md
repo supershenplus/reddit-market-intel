@@ -1,6 +1,6 @@
 # TODO — reddit-market-intel
 
-**Active item:** W1-EOW — End-of-week review
+**Active item:** W3-6 — Re-analyze corpus, verify report surfaces high-monetization + simple-solution opps first
 
 ## W1 — Initial validation
 
@@ -23,11 +23,11 @@
 
 ## W3 — Scoring matrix v1 (new dimensions)
 
-- [ ] **W3-1** Add `monetization_score`, `solution_simplicity`, `market_size_score` columns to schema + migrate existing DB
-- [ ] **W3-2** Build `analysis/market_signals.py` — heuristic scorers for all 3 dimensions
-- [ ] **W3-3** Rebalance SCORING_WEIGHTS in config.py (new dims get 0.30 total weight)
-- [ ] **W3-4** Wire new signals into scorer + analyze pipeline
-- [ ] **W3-5** Add tests in `tests/test_market_signals.py`
+- [x] **W3-1** Add `monetization_score`, `solution_simplicity`, `market_size_score` columns to schema + migrate existing DB
+- [x] **W3-2** Build `analysis/market_signals.py` — heuristic scorers for all 3 dimensions
+- [x] **W3-3** Rebalance SCORING_WEIGHTS in config.py (new dims get 0.30 total weight)
+- [x] **W3-4** Wire new signals into scorer + analyze pipeline
+- [x] **W3-5** Add tests in `tests/test_market_signals.py`
 - [ ] **W3-6** Re-analyze corpus, verify report surfaces high-monetization + simple-solution opps first
 
 ## W4 — Scoring matrix v2 (scope expansion — tons missed in v1)
@@ -53,5 +53,7 @@
 
 > 1-line dated entries — newest first.
 
+- 2026-05-11 — W3 complete: monetization/simplicity/market_size signals added, 66 tests green, pushed 9403e16
+- 2026-05-11 — RAG classifier shipped (1.6% → 30% hit rate), 333 pain points from 1153 posts across 13 subreddits
 - 2026-05-11 — PRAW credentials wired, python-dotenv added, smoke test passing
 - 2026-05-11 — bigmode stack initialized: CLAUDE.md, TODO.md, CLAUDETODO.md, DECISIONS.md
