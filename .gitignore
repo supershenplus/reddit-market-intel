@@ -1,0 +1,11 @@
+data/market_intel.db
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+*.env
+*.local.json
+venv/
+.venv/
+HANDOFF.md
