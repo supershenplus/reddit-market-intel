@@ -121,9 +121,14 @@ def analyze(force):
     scorer = OpportunityScorer()
 
     if force:
-        db.conn.execute("DELETE FROM pain_points")
-        db.conn.execute("DELETE FROM clusters")
-        db.conn.commit()
+        try:
+            with db.conn:
+                db.conn.execute("DELETE FROM pain_points")
+                db.conn.execute("DELETE FROM clusters")
+        except Exception as e:
+            console.print(f"[red]--force failed clearing tables: {e}[/red]")
+            db.close()
+            raise
         console.print("[yellow]--force: cleared pain_points + clusters. Re-analyzing all posts.[/yellow]")
 
     # Step 1: Classify unanalyzed posts

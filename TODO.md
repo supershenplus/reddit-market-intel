@@ -99,7 +99,10 @@
 
 > Severity-tagged findings from EOW review. Fix Critical before next sprint.
 
-(none yet — first sprint)
+- [ ] **W5-EOW-role-sync** — `LIENCLEAR_ROLE_PATTERNS` (config.py:144) keys must stay in sync with `LIENCLEAR_ROLE_MULTIPLIERS` (config.py:198) and the hardcoded `role_order` in `compute_lienclear_relevance` (analysis/market_signals.py:133). Add a startup assert or derive `role_order` from the patterns dict so a forgotten role silently defaulting to 1.0× doesn't slip through. Severity: warning.
+- [ ] **W5-EOW-reseed-race** — `RAGClassifier._ensure_seeds` (analysis/rag_classifier.py) deletes + recreates collection on seeds-hash mismatch. Not atomic; concurrent queries during reseed see partial state. Single-user CLI today so low risk. If pipeline runs concurrent (worker pool, web service) add file-lock or two-collection swap. Severity: info.
+- [ ] **W5-EOW-chroma-metadata-init** — `_ensure_seeds` reads `collection.metadata.get("seeds_hash")`. If ChromaDB returns a collection without metadata initialized, comparison silently fails and seeds never reseed on version bump. Verify metadata always set on `get_or_create_collection`; fallback to treat missing metadata as stale-hash. Severity: warning.
+- [ ] **W5-EOW-cli-integration-tests** — No integration tests cover `--force` or `--profile lienclear` CLI flags. Add `tests/test_cli.py` using Click's `CliRunner` to verify --force clears tables, --profile lienclear engages PROFILES overlay, --profile default unchanged. Severity: warning.
 
 ## Recent
 

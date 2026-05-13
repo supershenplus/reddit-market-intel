@@ -1,7 +1,7 @@
 """Export clustered opportunity reports for Claude Code analysis."""
 
 import json
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime
 
 from storage.db import Database
@@ -209,7 +209,6 @@ class ReportGenerator:
         )
         canonical = {c.lower(): c for c in LIENCLEAR_COMPETITORS}
         comp_counts: Counter = Counter()
-        comp_post_ids: dict[str, list[int]] = defaultdict(list)
         for row in cur.fetchall():
             try:
                 parsed = json.loads(row["matched_patterns"])

@@ -179,7 +179,7 @@ LIENCLEAR_DOMAIN_KEYWORDS = [
     r"\bAIA\s*G?70[23]\b", r"\bG702\b", r"\bG703\b",
     r"\bschedule of values\b", r"\bSOV\b",
     r"\bpay apps?\b", r"\bpay applications?\b", r"\bpay-?when-?paid\b",
-    r"\bretainage\b", r"\bretention\b.*\b(?:withheld|held|release)\b",
+    r"\bretainage\b", r"\bretention\b.{0,80}\b(?:withheld|held|release)\b",
     r"\bpreliminary notices?\b", r"\bnotice to owner\b",
     r"\bmechanic'?s liens?\b", r"\blien rights?\b",
     r"\bprogress (?:billing|payments?)\b",
