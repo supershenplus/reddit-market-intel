@@ -1,52 +1,93 @@
 """Export clustered opportunity reports for Claude Code analysis."""
 
 import json
+from collections import Counter, defaultdict
 from datetime import datetime
 
 from storage.db import Database
+
+try:
+    from config import PROFILES, LIENCLEAR_COMPETITORS
+except ImportError:  # pragma: no cover — defensive for partial configs
+    PROFILES = {}
+    LIENCLEAR_COMPETITORS = []
 
 
 class ReportGenerator:
     """Generates structured markdown reports of market opportunities."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, profile: str | None = None):
         self.db = db
+        self.profile = profile
+        self.profile_cfg = PROFILES.get(profile, {}) if profile else {}
 
     def generate(self, top_n: int = 20, min_score: float = 0.0) -> str:
-        """Generate a clustered opportunity report.
-
-        Args:
-            top_n: Max number of opportunities to include.
-            min_score: Minimum avg_opportunity_score for a cluster.
-
-        Returns:
-            Markdown string.
-        """
+        """Generate a clustered opportunity report."""
         clusters = self.db.get_all_clusters()
         clusters = [c for c in clusters if (c["avg_opportunity_score"] or 0) >= min_score]
-        clusters = clusters[:top_n]
+
+        # Lienclear profile: enrich + re-rank by aggregated lienclear_relevance
+        if self.profile == "lienclear":
+            min_rel = self.profile_cfg.get("min_relevance", 0.30)
+            strong_rel = self.profile_cfg.get("strong_relevance", 0.50)
+            min_posts = self.profile_cfg.get("min_cluster_posts", 2)
+            enriched = []
+            for c in clusters:
+                meta = self._aggregate_lienclear_meta(c["id"])
+                rel = meta["avg_relevance"]
+                # Strong-signal singletons survive; marginal singletons get filtered as noise.
+                if rel >= strong_rel or (rel >= min_rel and (c["post_count"] or 0) >= min_posts):
+                    enriched.append({**c, "_lc": meta})
+            enriched.sort(
+                key=lambda c: (c["_lc"]["avg_relevance"], c["avg_opportunity_score"] or 0),
+                reverse=True,
+            )
+            clusters = enriched[:top_n]
+        else:
+            clusters = clusters[:top_n]
 
         if not clusters:
             return "# Market Opportunity Report\n\nNo opportunities found above threshold.\n"
 
+        title_suffix = f" ({self.profile})" if self.profile else ""
         lines = [
-            f"# Market Opportunity Report — {datetime.now().strftime('%Y-%m-%d')}",
+            f"# Market Opportunity Report{title_suffix} — {datetime.now().strftime('%Y-%m-%d')}",
             "",
             f"**Generated**: {datetime.now().isoformat()}",
             f"**Clusters shown**: {len(clusters)} (min score: {min_score})",
-            "",
-            "---",
-            "",
         ]
+        if self.profile == "lienclear":
+            lines.append(f"**Profile**: lienclear — ranked by avg lienclear_relevance, min {self.profile_cfg.get('min_relevance', 0.30):.2f}")
+        lines.extend(["", "---", ""])
+
+        # Profile-level Competitor Gap section (before clusters)
+        if self.profile == "lienclear" and self.profile_cfg.get("include_competitor_gap_section"):
+            gap_section = self._render_competitor_gap_section()
+            if gap_section:
+                lines.extend(gap_section)
 
         for rank, cluster in enumerate(clusters, 1):
             subreddits = json.loads(cluster["subreddits"]) if cluster["subreddits"] else []
             trending = "Yes" if cluster["trending"] else "No"
 
             lines.append(f"## Opportunity #{rank}: {cluster['label']}")
-            lines.append(f"**Score**: {cluster['avg_opportunity_score']:.2f} | "
-                        f"**Posts**: {cluster['post_count']} | "
-                        f"**Subreddits**: {', '.join(subreddits)}")
+            if self.profile == "lienclear":
+                lc = cluster.get("_lc", {})
+                lines.append(
+                    f"**Lienclear relevance**: {lc.get('avg_relevance', 0):.2f} | "
+                    f"**Opportunity score**: {cluster['avg_opportunity_score']:.2f} | "
+                    f"**Posts**: {cluster['post_count']}"
+                )
+                lines.append(f"**Subreddits**: {', '.join(subreddits)}")
+                lc_facets = self._render_lienclear_facets(lc)
+                if lc_facets:
+                    lines.extend(lc_facets)
+            else:
+                lines.append(
+                    f"**Score**: {cluster['avg_opportunity_score']:.2f} | "
+                    f"**Posts**: {cluster['post_count']} | "
+                    f"**Subreddits**: {', '.join(subreddits)}"
+                )
             lines.append(f"**Trending**: {trending} | "
                         f"**First seen**: {cluster['first_seen'] or 'N/A'} | "
                         f"**Last seen**: {cluster['last_seen'] or 'N/A'}")
@@ -92,6 +133,129 @@ class ReportGenerator:
             lines.append("")
 
         return "\n".join(lines)
+
+    # --- Lienclear profile helpers -------------------------------------------------
+
+    def _aggregate_lienclear_meta(self, cluster_id: int) -> dict:
+        """Aggregate per-cluster Lienclear signal from matched_patterns JSON blobs."""
+        cur = self.db.conn.execute(
+            "SELECT matched_patterns FROM pain_points WHERE cluster_id = ?",
+            (cluster_id,),
+        )
+        # Only count competitors still in the live config — stale matches from
+        # earlier analyze runs (e.g. an over-broad name we later removed) are
+        # filtered here without requiring full re-analysis.
+        canonical = {c.lower(): c for c in LIENCLEAR_COMPETITORS}
+        relevances: list[float] = []
+        states: Counter = Counter()
+        roles: Counter = Counter()
+        dollars: Counter = Counter()
+        competitors: Counter = Counter()
+        domain_hits = 0
+        total = 0
+        for row in cur.fetchall():
+            total += 1
+            blob = row["matched_patterns"]
+            if not blob:
+                continue
+            try:
+                parsed = json.loads(blob)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            lc = parsed.get("lienclear") if isinstance(parsed, dict) else None
+            if not lc:
+                continue
+            relevances.append(float(lc.get("score") or 0))
+            for s in lc.get("states") or []:
+                states[s] += 1
+            if lc.get("role"):
+                roles[lc["role"]] += 1
+            for d in lc.get("dollar_anchors") or []:
+                dollars[d] += 1
+            for comp in lc.get("competitor_mentions") or []:
+                key = comp.lower()
+                if key in canonical:
+                    competitors[canonical[key]] += 1
+            if lc.get("domain_hit"):
+                domain_hits += 1
+        avg_relevance = sum(relevances) / len(relevances) if relevances else 0.0
+        return {
+            "avg_relevance": avg_relevance,
+            "post_count": total,
+            "domain_hit_rate": (domain_hits / total) if total else 0.0,
+            "states": states.most_common(5),
+            "roles": roles.most_common(5),
+            "dollar_anchors": dollars.most_common(5),
+            "competitors": competitors.most_common(5),
+        }
+
+    def _render_lienclear_facets(self, lc: dict) -> list[str]:
+        lines = []
+        if lc.get("states"):
+            lines.append("**States**: " + ", ".join(f"{s} ({n})" for s, n in lc["states"]))
+        if lc.get("roles"):
+            lines.append("**Roles**: " + ", ".join(f"{r} ({n})" for r, n in lc["roles"]))
+        if lc.get("dollar_anchors"):
+            lines.append("**$ anchors**: " + ", ".join(f"{d} ({n})" for d, n in lc["dollar_anchors"]))
+        if lc.get("competitors"):
+            lines.append("**Competitor mentions**: " + ", ".join(f"{c} ({n})" for c, n in lc["competitors"]))
+        lines.append(f"**Domain-hit rate**: {lc.get('domain_hit_rate', 0):.0%}")
+        return lines
+
+    def _render_competitor_gap_section(self) -> list[str]:
+        """Top-level Competitor Gap section aggregating mentions across all clusters."""
+        cur = self.db.conn.execute(
+            "SELECT matched_patterns FROM pain_points WHERE matched_patterns IS NOT NULL"
+        )
+        canonical = {c.lower(): c for c in LIENCLEAR_COMPETITORS}
+        comp_counts: Counter = Counter()
+        comp_post_ids: dict[str, list[int]] = defaultdict(list)
+        for row in cur.fetchall():
+            try:
+                parsed = json.loads(row["matched_patterns"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            lc = parsed.get("lienclear") if isinstance(parsed, dict) else None
+            if not lc:
+                continue
+            for comp in lc.get("competitor_mentions") or []:
+                key = comp.lower()
+                if key in canonical:
+                    comp_counts[canonical[key]] += 1
+        if not comp_counts:
+            return []
+        lines = [
+            "## Competitor Gap Analysis",
+            "",
+            "Named-competitor mentions extracted across all Lienclear-relevant pain points. "
+            "Frequency indicates where existing tools are being discussed (often negatively).",
+            "",
+        ]
+        for comp, count in comp_counts.most_common(len(LIENCLEAR_COMPETITORS) or 10):
+            lines.append(f"- **{comp}** — {count} mention{'s' if count != 1 else ''}")
+            quote = self._sample_negative_quote(comp)
+            if quote:
+                lines.append(f"  > {quote}")
+        lines.extend(["", "---", ""])
+        return lines
+
+    def _sample_negative_quote(self, competitor: str) -> str | None:
+        """Find one short negative-product comment mentioning this competitor."""
+        import re as _re
+
+        cur = self.db.conn.execute(
+            "SELECT body FROM comments WHERE product_negative = 1 AND body LIKE ? LIMIT 20",
+            (f"%{competitor}%",),
+        )
+        # Apply word-boundary check in Python (SQL LIKE is too permissive — e.g.
+        # 'Handle' would match 'handled'). Caller already filtered to competitors
+        # present in the precompiled regex set.
+        pattern = _re.compile(r"\b" + _re.escape(competitor) + r"\b", _re.IGNORECASE)
+        for row in cur.fetchall():
+            body = (row["body"] or "").replace("\n", " ").strip()
+            if pattern.search(body):
+                return (body[:200] + "…") if len(body) > 200 else body
+        return None
 
     def _get_cluster_evidence(self, cluster_id: int) -> list[dict]:
         """Get top pain points for a cluster, ordered by score."""

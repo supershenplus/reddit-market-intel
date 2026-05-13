@@ -1,5 +1,6 @@
 """Reddit Market Intelligence Pipeline — CLI Entrypoint."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from analysis.market_signals import (
     compute_monetization_score,
     compute_solution_simplicity,
     compute_market_size_score,
+    compute_lienclear_relevance,
 )
 from analysis.clustering import PainPointClusterer
 from discovery.subreddit_finder import SubredditFinder
@@ -106,11 +108,23 @@ def scrape(subreddit, category, limit, sort, comments):
 
 
 @cli.command()
-def analyze():
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-analyze all posts (drops pain_points + clusters first)",
+)
+def analyze(force):
     """Run analysis pipeline: classify, validate, score, and cluster pain points."""
     db = Database()
     classifier = PainPointClassifier()
     scorer = OpportunityScorer()
+
+    if force:
+        db.conn.execute("DELETE FROM pain_points")
+        db.conn.execute("DELETE FROM clusters")
+        db.conn.commit()
+        console.print("[yellow]--force: cleared pain_points + clusters. Re-analyzing all posts.[/yellow]")
 
     # Step 1: Classify unanalyzed posts
     unanalyzed = db.get_posts_without_pain_points()
@@ -120,6 +134,19 @@ def analyze():
     for post in unanalyzed:
         result = classifier.classify(post["title"], post["body"])
         if result:
+            # Lienclear profile signal — extracted at classify-time so it
+            # rides alongside intent in matched_patterns (no schema change).
+            lc = compute_lienclear_relevance(
+                post["title"] or "", post["body"] or "", post["subreddit"]
+            )
+            try:
+                existing_mp = json.loads(result["matched_patterns"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                existing_mp = []
+            result["matched_patterns"] = json.dumps(
+                {"intent": existing_mp, "lienclear": lc}
+            )
+
             # Get validation score from comments
             comments_raw = db.get_comments_for_post(post["reddit_id"])
             # Convert to RedditComment-like objects for validator
@@ -222,14 +249,22 @@ def discover(from_sub, category):
 @click.option("--top", "-n", default=20, help="Number of top opportunities to export")
 @click.option("--output", "-o", default="report.md", help="Output file path")
 @click.option("--min-score", default=0.0, help="Minimum opportunity score threshold")
-def export(top, output, min_score):
+@click.option(
+    "--profile",
+    type=click.Choice(["default", "lienclear"]),
+    default="default",
+    help="Report overlay: 'default' (generic SMB) or 'lienclear' (construction lien-waiver SaaS).",
+)
+def export(top, output, min_score, profile):
     """Export clustered opportunity report as markdown."""
     db = Database()
-    generator = ReportGenerator(db)
+    generator = ReportGenerator(db, profile=profile if profile != "default" else None)
     report = generator.generate(top_n=top, min_score=min_score)
 
     Path(output).write_text(report, encoding="utf-8")
     console.print(f"[bold green]Report exported to {output}[/bold green]")
+    if profile != "default":
+        console.print(f"[dim]Profile: {profile}[/dim]")
     console.print(f"[dim]Open in Claude Code: 'Analyze {output} for market opportunities'[/dim]")
     db.close()
 

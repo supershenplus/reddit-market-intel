@@ -1,5 +1,6 @@
 """RAG-based pain-point classifier using sentence-transformers + ChromaDB."""
 
+import hashlib
 import json
 
 import chromadb
@@ -22,6 +23,10 @@ SEEDS: dict[str, list[str]] = {
         "Does anyone know a service that does this well?",
         "What do you all use for payroll and scheduling?",
         "Need something to automate my client onboarding",
+        "What do you guys use for AIA G702 G703 pay applications?",
+        "Is there a simple lien waiver tool that handles state-specific forms?",
+        "Looking for a Levelset alternative now that Procore bought it",
+        "Need software to generate conditional and unconditional waivers",
     ],
     "would_pay": [
         "I would gladly pay for a solution to this problem",
@@ -29,6 +34,8 @@ SEEDS: dict[str, list[str]] = {
         "I'm willing to pay good money for something that actually works",
         "This is worth paying for, I've been dealing with this for years",
         "I'd pay $50/month easily if it solved this",
+        "I would pay 99 a month for a lien waiver and pay app tool",
+        "Honestly $150 a month would be worth it just to stop using Excel for pay apps",
     ],
     "frustrated": [
         "I'm so frustrated with the existing tools, they're all terrible",
@@ -38,6 +45,11 @@ SEEDS: dict[str, list[str]] = {
         "I can't stand how clunky this software is",
         "Nothing on the market actually handles this properly",
         "Struggling with this workflow for months and can't find a fix",
+        "Procore is way too expensive for a small sub like us",
+        "Levelset got gutted after Procore acquired them, no real free tier anymore",
+        "Textura charges us $25 every single pay application, absurd",
+        "Every GC wants a different system, Procore Textura paper AIA forms",
+        "Almost signed an unconditional final waiver before getting my check, would have given up lien rights",
     ],
     "feature_request": [
         "I wish there was a simple way to do this",
@@ -45,6 +57,8 @@ SEEDS: dict[str, list[str]] = {
         "Why hasn't anyone made something that does X and Y together?",
         "This feature is missing from every app I've tried",
         "The tool I use doesn't support this integration at all",
+        "Need a cross-GC dashboard so I can see all my projects in one place",
+        "Wish there was a sub-friendly portal that just does waivers and pay apps",
     ],
     "unbundle": [
         "It's overkill for what I actually need",
@@ -52,6 +66,8 @@ SEEDS: dict[str, list[str]] = {
         "Paying for features I'll never use",
         "All I need is a lightweight tool, not another bloated platform",
         "I don't need half of what they're selling me",
+        "Procore has way too much we don't need, just want lien waivers and pay apps",
+        "Don't need the full construction management suite, just billing",
     ],
 }
 
@@ -78,10 +94,26 @@ class RAGClassifier:
         )
         self._ensure_seeds()
 
+    def _seeds_hash(self) -> str:
+        payload = json.dumps(SEEDS, sort_keys=True).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()[:16]
+
     def _ensure_seeds(self):
+        current_hash = self._seeds_hash()
         existing = self._collection.count()
-        if existing > 0:
+        # Reseed when the SEEDS dict changes — the collection's metadata stores
+        # the hash of the last embedded seed set so version drift is detected.
+        existing_meta = self._collection.metadata or {}
+        if existing > 0 and existing_meta.get("seeds_hash") == current_hash:
             return
+        if existing > 0:
+            self._client.delete_collection(name=COLLECTION_NAME)
+            self._collection = self._client.get_or_create_collection(
+                name=COLLECTION_NAME,
+                metadata={"hnsw:space": "cosine", "seeds_hash": current_hash},
+            )
+        else:
+            self._collection.modify(metadata={"hnsw:space": "cosine", "seeds_hash": current_hash})
         docs, ids, metas = [], [], []
         for category, phrases in SEEDS.items():
             for i, phrase in enumerate(phrases):
@@ -117,17 +149,18 @@ class RAGClassifier:
         if not hits:
             return None
 
-        # Pick highest-priority category among hits
-        categories_seen: dict[str, float] = {}
-        for similarity, category in hits:
-            priority = INTENT_PRIORITY.get(category, 0)
-            if category not in categories_seen or priority > INTENT_PRIORITY.get(
-                list(categories_seen.keys())[-1], 0
-            ):
-                categories_seen[category] = similarity
+        # Only categories within a similarity margin of the top hit can win on
+        # priority — prevents a barely-passing seed from outranking a much
+        # stronger semantic match in a different (lower-priority) bucket.
+        top_similarity = max(s for s, _ in hits)
+        margin = 0.15
+        candidates = [(s, c) for s, c in hits if s >= top_similarity - margin]
 
-        primary_category = max(categories_seen, key=lambda c: INTENT_PRIORITY.get(c, 0))
-        top_similarity = categories_seen[primary_category]
+        primary_category = max(
+            candidates,
+            key=lambda sc: (INTENT_PRIORITY.get(sc[1], 0), sc[0]),
+        )[1]
+        top_similarity = max(s for s, c in candidates if c == primary_category)
 
         # Sentiment intensity: normalize top similarity to [0, 1] relative to threshold
         sentiment_intensity = min(1.0, (top_similarity - SIMILARITY_THRESHOLD) / (1.0 - SIMILARITY_THRESHOLD))

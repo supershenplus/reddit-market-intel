@@ -39,6 +39,13 @@ SEED_SUBREDDITS = {
     "productivity": ["productivity", "selfhosted", "nocode", "Automate"],
     "dev_tools": ["webdev", "devops", "programming", "sideproject"],
     "freelance": ["freelance", "DigitalNomad", "WorkOnline"],
+    "construction_subs": [
+        "Construction", "Contractor", "ConstructionManagers",
+        "Electricians", "HVAC", "Plumbing",
+        "Roofing", "Concrete", "Carpentry", "Painting", "Flooring",
+        "Welding", "Estimators",
+        "Bookkeeping",
+    ],
 }
 
 # Scoring weights (must sum to 1.0)
@@ -99,3 +106,116 @@ CLUSTER_DISTANCE_THRESHOLD = 0.65
 TFIDF_MAX_FEATURES = 5000
 TRENDING_MULTIPLIER = 2.0     # post count in 30d must exceed this * avg to be "trending"
 RECENCY_HALF_LIFE_DAYS = 90
+
+# ---------------------------------------------------------------------------
+# Lienclear research profile — construction lien-waiver + AIA pay-app SaaS
+# Domain: small specialty-trade subcontractors (5–100 employees, $500K–$10M rev)
+# Pricing: $49–199/mo. Beachhead: CA → TX/FL/NY/GA. See plan in
+# .claude/plans/sequential-painting-nova.md and supershenplus/startup_docs.
+# ---------------------------------------------------------------------------
+
+# Beachhead 5 — weight 1.0. Other 8 statutory-form states — weight 0.6.
+LIENCLEAR_BEACHHEAD_STATES = [
+    r"\bCalifornia\b", r"\bCA\b",
+    r"\bTexas\b", r"\bTX\b",
+    r"\bFlorida\b", r"\bFL\b",
+    r"\bNew York\b", r"\bNY\b",
+    r"\bGeorgia\b", r"\bGA\b",
+]
+LIENCLEAR_STATUTORY_STATES = [
+    r"\bArizona\b", r"\bAZ\b",
+    r"\bMassachusetts\b", r"\bMA\b",
+    r"\bMichigan\b", r"\bMI\b",
+    r"\bMississippi\b", r"\bMS\b",
+    r"\bMissouri\b", r"\bMO\b",
+    r"\bMontana\b", r"\bMT\b",
+    r"\bNevada\b", r"\bNV\b",
+    r"\bUtah\b", r"\bUT\b",
+]
+
+# Dollar anchors near Lienclear pricing tiers ($49 / $99 / $199 + adjacent)
+LIENCLEAR_DOLLAR_ANCHORS = [
+    r"\$\s*(?:25|49|50|75|99|100|149|150|199|200)\b",
+    r"\$\s*\d+\s*(?:/mo|/month|per month|a month)\b",
+]
+
+# ICP role hints — first 3 boost score, last 2 downweight (not the buyer)
+LIENCLEAR_ROLE_PATTERNS = {
+    "office_manager": [
+        r"\boffice manager\b", r"\bproject admin(?:istrator)?\b",
+        r"\bAP clerk\b", r"\bAR clerk\b", r"\bbilling clerk\b",
+        r"\baccounts payable\b", r"\baccounts receivable\b",
+    ],
+    "owner_operator": [
+        r"\bI own (?:a |the )?(?:small )?(?:construction|electrical|plumbing|HVAC|roofing|concrete) (?:company|business|contractor)\b",
+        r"\bmy (?:construction|sub|trade) (?:company|business)\b",
+        r"\bas a small (?:sub|subcontractor|contractor)\b",
+        r"\bwe run a (?:small )?(?:trade|sub|construction)\b",
+    ],
+    "bookkeeper": [
+        r"\bbookkeeper\b", r"\bconstruction accountant\b",
+        r"\bQuickBooks (?:for |construction)\b",
+    ],
+    "gc": [
+        r"\bgeneral contractor\b", r"\bas a GC\b", r"\bwe(?:'re| are) the GC\b",
+        r"\bGC requires\b", r"\bour GC\b",
+    ],
+    "homeowner": [
+        r"\bhomeowner\b", r"\bmy house\b", r"\bremodel(?:ing)? my\b",
+        r"\bcontractor I hired\b", r"\bDIY (?:home )?(?:reno|remodel)\b",
+    ],
+}
+
+# Named competitors from BusinessPlan §2.4
+LIENCLEAR_COMPETITORS = [
+    "Procore", "Levelset", "Textura", "GCPay", "Siteline",
+    "Handle.com", "Buildertrend", "CoConstruct",
+]
+
+# Domain vocabulary — presence of these is the primary signal that a post is
+# even on-topic for Lienclear. Without a hit here, score caps low.
+LIENCLEAR_DOMAIN_KEYWORDS = [
+    r"\blien waivers?\b", r"\bconditional waivers?\b", r"\bunconditional waivers?\b",
+    r"\bAIA\s*G?70[23]\b", r"\bG702\b", r"\bG703\b",
+    r"\bschedule of values\b", r"\bSOV\b",
+    r"\bpay apps?\b", r"\bpay applications?\b", r"\bpay-?when-?paid\b",
+    r"\bretainage\b", r"\bretention\b.*\b(?:withheld|held|release)\b",
+    r"\bpreliminary notices?\b", r"\bnotice to owner\b",
+    r"\bmechanic'?s liens?\b", r"\blien rights?\b",
+    r"\bprogress (?:billing|payments?)\b",
+]
+
+# Score component weights for compute_lienclear_relevance (sum = 1.0)
+LIENCLEAR_RELEVANCE_WEIGHTS = {
+    "domain_hit": 0.40,
+    "state_match": 0.20,
+    "dollar_anchor": 0.15,
+    "icp_role": 0.15,
+    "competitor_mention": 0.10,
+}
+
+# Role multipliers applied to final score
+LIENCLEAR_ROLE_MULTIPLIERS = {
+    "office_manager": 1.0,
+    "owner_operator": 1.0,
+    "bookkeeper": 0.9,
+    "gc": 0.35,
+    "homeowner": 0.25,
+}
+
+# Profile overlays — selected via `--profile` CLI flag on export
+PROFILES = {
+    "lienclear": {
+        "min_relevance": 0.30,
+        "strong_relevance": 0.40,
+        "min_cluster_posts": 2,
+        "rank_by": "lienclear_relevance",
+        "include_competitor_gap_section": True,
+        "boost_subs": {
+            "Construction", "Contractor", "ConstructionManagers",
+            "Electricians", "HVAC", "Plumbing", "Roofing",
+            "Concrete", "Carpentry", "Painting", "Flooring",
+            "Welding", "Estimators",
+        },
+    },
+}
