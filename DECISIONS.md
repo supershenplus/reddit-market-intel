@@ -33,3 +33,21 @@ Append-only ADR log. Add entries when non-obvious architectural choices are made
 **Choice:** `SIMILARITY_THRESHOLD = 0.35` in `config.py` — not hardcoded in classifier.
 **Why:** Optimal threshold depends on corpus and seed quality; 0.35 is empirically reasonable but unvalidated. Making it config means it can be tuned without code changes once benchmarking data exists (W2-4).
 **Rejected:** Hardcoded threshold (makes benchmarking iteration require code edits).
+
+## 2026-05-12: Profile overlays via PROFILES dict — no SCORING_WEIGHTS rebalance
+
+**Choice:** Lienclear-specific scoring/filter behavior lives in a `PROFILES["lienclear"]` overlay dict in `config.py`. The Lienclear relevance score is computed alongside the generic opportunity score and stored inside the `matched_patterns` JSON column (no new schema columns). Profile is selected via `--profile lienclear` on export.
+**Why:** Rebalancing the shared `SCORING_WEIGHTS` for one research profile would corrupt cross-profile comparability and require re-scoring all historical pain points whenever the weights drift. Overlay-only means generic and Lienclear reports stay byte-stable side-by-side, and adding more profiles later (e.g. another vertical) doesn't fight existing data.
+**Rejected:** SCORING_WEIGHTS rebalance per profile (breaks comparability); dedicated `pain_points_lienclear` table (violates single-table convention, duplicates schema); new schema columns for Lienclear facets (premature — JSON works fine until query pressure justifies it).
+
+## 2026-05-12: Domain-hit as soft cap, not hard precondition
+
+**Choice:** `compute_lienclear_relevance` caps raw_score at 0.20 when `domain_hits` is empty, rather than zeroing or returning early. State/role/$/competitor facets are still extracted and surfaced in the report breakdown.
+**Why:** Zeroing loses diagnostic value — when investigating false positives, knowing the per-component breakdown matters. Cap at 0.20 keeps the post visible to the inspector while blocking it from crossing the 0.30 export threshold. Reversible by config tweak if the cap turns out wrong.
+**Rejected:** Full zero-out (loses facet diagnostics); hard precondition `return out` early (same diagnostic loss + obscures partial-match cases in tests).
+
+## 2026-05-12: Comment augmentation rejected on measured signal density
+
+**Choice:** `compute_lienclear_relevance` operates on post title + body only; comments are NOT concatenated into the scoring text. Decided via data: 22/62846 comments (0.035%) hit any Lienclear domain keyword.
+**Why:** Architectural refactor to feed comment text into the scorer was about to ship "to fix" a thin signal. Cheap diagnostic (one `for row in conn.execute("SELECT body FROM comments"):` loop) showed augmentation would not move the needle. Surfaced the number to the user, killed the refactor before commit. Real bottleneck is upstream RAG classifier filtering construction posts, not comment coverage.
+**Rejected:** Concat top-N comment bodies into augmented_body (refactor for ~0% signal gain); synthetic pain_point insertion for unclassified-but-domain-hit posts (couples Lienclear logic to pain_points lifecycle, dilutes cluster quality with off-topic text).
