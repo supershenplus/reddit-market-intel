@@ -103,17 +103,18 @@ class RAGClassifier:
         existing = self._collection.count()
         # Reseed when the SEEDS dict changes — the collection's metadata stores
         # the hash of the last embedded seed set so version drift is detected.
+        # Missing/None metadata reads as stale, which safely forces a reseed.
         existing_meta = self._collection.metadata or {}
         if existing > 0 and existing_meta.get("seeds_hash") == current_hash:
             return
+        # Reseed needed. Drop any stale/partial collection first so we start
+        # from a clean slate (no seeds_hash yet — it is stamped last, below).
         if existing > 0:
             self._client.delete_collection(name=COLLECTION_NAME)
             self._collection = self._client.get_or_create_collection(
                 name=COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine", "seeds_hash": current_hash},
+                metadata={"hnsw:space": "cosine"},
             )
-        else:
-            self._collection.modify(metadata={"hnsw:space": "cosine", "seeds_hash": current_hash})
         docs, ids, metas = [], [], []
         for category, phrases in SEEDS.items():
             for i, phrase in enumerate(phrases):
@@ -122,6 +123,12 @@ class RAGClassifier:
                 metas.append({"category": category})
         embeddings = self._model.encode(docs, normalize_embeddings=True).tolist()
         self._collection.add(documents=docs, embeddings=embeddings, ids=ids, metadatas=metas)
+        # Stamp the hash LAST — it is the commit marker. A crash before this
+        # point leaves no/stale hash, so the next run reseeds rather than
+        # trusting a partially embedded collection.
+        self._collection.modify(
+            metadata={"hnsw:space": "cosine", "seeds_hash": current_hash}
+        )
 
     def classify(self, title: str, body: str) -> dict | None:
         self._load()
