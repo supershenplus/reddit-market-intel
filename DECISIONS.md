@@ -51,3 +51,22 @@ Append-only ADR log. Add entries when non-obvious architectural choices are made
 **Choice:** `compute_lienclear_relevance` operates on post title + body only; comments are NOT concatenated into the scoring text. Decided via data: 22/62846 comments (0.035%) hit any Lienclear domain keyword.
 **Why:** Architectural refactor to feed comment text into the scorer was about to ship "to fix" a thin signal. Cheap diagnostic (one `for row in conn.execute("SELECT body FROM comments"):` loop) showed augmentation would not move the needle. Surfaced the number to the user, killed the refactor before commit. Real bottleneck is upstream RAG classifier filtering construction posts, not comment coverage.
 **Rejected:** Concat top-N comment bodies into augmented_body (refactor for ~0% signal gain); synthetic pain_point insertion for unclassified-but-domain-hit posts (couples Lienclear logic to pain_points lifecycle, dilutes cluster quality with off-topic text).
+
+## 2026-05-21: Domain detection at the report layer, not via synthetic pain_points
+
+**Choice:** The lienclear report (`export/report.py`) renders a `Domain-Hit Posts` section by
+scanning every row in `posts` through `compute_lienclear_relevance` at export time, surfacing
+posts that hit Lienclear domain keywords regardless of whether the RAG classifier ever
+classified them. Domain detection is decoupled from the generic pain-point classifier gate.
+**Why:** Diagnostic confirmed `BUG-thin-signal`: of 5 domain-hit posts in a 3636-post corpus,
+3 were dropped by the `if result:` classifier gate (`main.py:141`) before `compute_lienclear_relevance`
+could score them. That function is pure regex on title/body/subreddit — it has zero dependency
+on classifier output, so gating it behind the classifier was an architectural wart. A
+report-layer scan recovers the dropped posts with no schema change and no `main.py` change.
+**Rejected:** Synthetic pain_point insertion for unclassified-but-domain-hit posts (already
+rejected 2026-05-12 — pollutes the shared `pain_points` table, dilutes cluster quality, couples
+Lienclear logic to the pain_points lifecycle). RAG construction-seed expansion (a different
+lever — lifts generic classification rate, carries false-positive risk, overlaps unfinished
+W5-4). Note: this closes the *classifier-gate* component of `BUG-thin-signal`; the *corpus
+thinness* component (only 5 domain-hit posts exist) remains a sourcing problem for a future
+rescrape, not a code blocker.

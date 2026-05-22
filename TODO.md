@@ -1,6 +1,6 @@
 # TODO — reddit-market-intel
 
-**Active item:** W5-signal-tuning shipped (domain gate + --force + cluster floor + Procore case fix). Corpus 3636 posts / 62.8k comments. Signal genuinely thin: 5/3636 raw posts domain-hit, 22/62846 comments domain-hit (0.035%). Comment augmentation rejected as unjustified. Next: re-evaluate classifier filter rate or expand domain keyword surface.
+**Active item:** W5 hardening sweep complete (4 W5-EOW findings) + BUG-thin-signal classifier-gate fixed — the lienclear report now scans `posts` directly for domain hits, independent of the RAG classifier gate (4 posts surface in `reports/lienclear-v3.md`, incl. 2 the classifier had dropped). Remaining thinness is a corpus problem (~5 domain-hit posts in 3636), not code — needs a targeted rescrape (W5-2). Next: W5-2 corpus expansion or W5-7/8/9 lienclear outputs.
 
 ## W1 — Initial validation
 
@@ -99,15 +99,16 @@
 
 > Severity-tagged findings from EOW review. Fix Critical before next sprint.
 
-- [ ] **W5-EOW-role-sync** — `LIENCLEAR_ROLE_PATTERNS` (config.py:144) keys must stay in sync with `LIENCLEAR_ROLE_MULTIPLIERS` (config.py:198) and the hardcoded `role_order` in `compute_lienclear_relevance` (analysis/market_signals.py:133). Add a startup assert or derive `role_order` from the patterns dict so a forgotten role silently defaulting to 1.0× doesn't slip through. Severity: warning.
-- [ ] **W5-EOW-reseed-race** — `RAGClassifier._ensure_seeds` (analysis/rag_classifier.py) deletes + recreates collection on seeds-hash mismatch. Not atomic; concurrent queries during reseed see partial state. Single-user CLI today so low risk. If pipeline runs concurrent (worker pool, web service) add file-lock or two-collection swap. Severity: info.
-- [ ] **W5-EOW-chroma-metadata-init** — `_ensure_seeds` reads `collection.metadata.get("seeds_hash")`. If ChromaDB returns a collection without metadata initialized, comparison silently fails and seeds never reseed on version bump. Verify metadata always set on `get_or_create_collection`; fallback to treat missing metadata as stale-hash. Severity: warning.
-- [ ] **W5-EOW-cli-integration-tests** — No integration tests cover `--force` or `--profile lienclear` CLI flags. Add `tests/test_cli.py` using Click's `CliRunner` to verify --force clears tables, --profile lienclear engages PROFILES overlay, --profile default unchanged. Severity: warning.
+- [x] **W5-EOW-role-sync** — `LIENCLEAR_ROLE_PATTERNS` (config.py:144) keys must stay in sync with `LIENCLEAR_ROLE_MULTIPLIERS` (config.py:198) and the hardcoded `role_order` in `compute_lienclear_relevance` (analysis/market_signals.py:133). Add a startup assert or derive `role_order` from the patterns dict so a forgotten role silently defaulting to 1.0× doesn't slip through. Severity: warning.
+- [x] **W5-EOW-reseed-race** — `RAGClassifier._ensure_seeds` (analysis/rag_classifier.py) deletes + recreates collection on seeds-hash mismatch. Not atomic; concurrent queries during reseed see partial state. Single-user CLI today so low risk. If pipeline runs concurrent (worker pool, web service) add file-lock or two-collection swap. Severity: info.
+- [x] **W5-EOW-chroma-metadata-init** — `_ensure_seeds` reads `collection.metadata.get("seeds_hash")`. If ChromaDB returns a collection without metadata initialized, comparison silently fails and seeds never reseed on version bump. Verify metadata always set on `get_or_create_collection`; fallback to treat missing metadata as stale-hash. Severity: warning.
+- [x] **W5-EOW-cli-integration-tests** — No integration tests cover `--force` or `--profile lienclear` CLI flags. Add `tests/test_cli.py` using Click's `CliRunner` to verify --force clears tables, --profile lienclear engages PROFILES overlay, --profile default unchanged. Severity: warning.
 
 ## Recent
 
 > 1-line dated entries — newest first.
 
+- 2026-05-21 — W5 hardening sweep + BUG-thin-signal gate fix. report.py: domain-hit scan surfaces every domain-keyword post in the lienclear report independent of the RAG classifier gate (4 posts in lienclear-v3.md, incl. 2 the classifier had dropped). market_signals.py: import-time assert locks `_ROLE_ORDER` to the config role dicts. rag_classifier.py: `_ensure_seeds` stamps `seeds_hash` after embed so an interrupted reseed self-heals. New tests/test_cli.py — 4 CliRunner tests for `--force` + `--profile`. 86 tests green. Note: project venv had to be rebuilt (prior env gone); pytest absent from requirements.txt.
 - 2026-05-12 — W5 signal tuning: domain-hit gate on compute_lienclear_relevance (caps non-domain posts at 0.20), --force flag on analyze, cluster post-count floor (min_cluster_posts=2, strong_relevance=0.40), Procore case-collision fix in Competitor Gap aggregator. 82 tests green. Rescrape: +2098 new posts (--sort new --limit 150) + 35 (--sort hot --limit 100), 41.8k + 1.6k comments. Diagnostic: 5/3636 raw posts domain-hit, 22/62846 comments (0.035%) — comment augmentation rejected. 2 clusters survive in reports/lienclear-v2.md (mechanics-lien foreclosure, AutoDesk Forma contract setup). Procore: 5 mentions total. Signal genuinely thin in current corpus shape.
 - 2026-05-12 — W5 Phase A+B shipped: construction_subs category, compute_lienclear_relevance signal, --profile lienclear flag, Competitor Gap section, RAG seed hash-based reseed, classifier margin fix. 79 tests green. Smoke test (350 posts, no comments, --sort top) ran pipeline clean but surfaced weak signal — top-of-all-time posts skew photo/skill not billing. Next: re-scrape with --sort new + comments before scaling to 2000.
 - 2026-05-11 — W3 complete: monetization/simplicity/market_size signals added, 66 tests green, pushed 9403e16
