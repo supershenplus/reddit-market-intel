@@ -39,6 +39,17 @@ _LC_COMPETITORS = re.compile(
     re.IGNORECASE,
 )
 
+# Role priority order — most specific buyer role wins. Kept as an explicit list
+# (not derived from dict key order) because match priority differs from config
+# insertion order. The assert keeps it locked to the config dicts: a role added
+# to LIENCLEAR_ROLE_PATTERNS but missed in LIENCLEAR_ROLE_MULTIPLIERS would
+# otherwise score silently at the 1.0x .get() default.
+_ROLE_ORDER = ["office_manager", "bookkeeper", "owner_operator", "gc", "homeowner"]
+assert set(_ROLE_ORDER) == set(LIENCLEAR_ROLE_PATTERNS) == set(LIENCLEAR_ROLE_MULTIPLIERS), (
+    "Lienclear role facets out of sync — _ROLE_ORDER, LIENCLEAR_ROLE_PATTERNS and "
+    "LIENCLEAR_ROLE_MULTIPLIERS must share identical keys"
+)
+
 
 def compute_monetization_score(title: str, body: str, subreddit: str) -> float:
     """Score [0.0, 1.0] — likelihood audience will pay for a solution."""
@@ -130,9 +141,8 @@ def compute_lienclear_relevance(title: str, body: str, subreddit: str) -> dict:
     components["dollar_anchor"] = min(1.0, len(dollar_hits) * 0.5) if dollar_hits else 0.0
 
     # ICP role detection — prefer most specific buyer role found
-    role_order = ["office_manager", "bookkeeper", "owner_operator", "gc", "homeowner"]
     detected_role = None
-    for role in role_order:
+    for role in _ROLE_ORDER:
         if any(p.search(text) for p in _LC_ROLES[role]):
             detected_role = role
             break
