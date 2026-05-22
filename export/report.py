@@ -5,6 +5,7 @@ from collections import Counter
 from datetime import datetime
 
 from storage.db import Database
+from analysis.market_signals import compute_lienclear_relevance
 
 try:
     from config import PROFILES, LIENCLEAR_COMPETITORS
@@ -27,6 +28,7 @@ class ReportGenerator:
         clusters = [c for c in clusters if (c["avg_opportunity_score"] or 0) >= min_score]
 
         # Lienclear profile: enrich + re-rank by aggregated lienclear_relevance
+        domain_section: list[str] = []
         if self.profile == "lienclear":
             min_rel = self.profile_cfg.get("min_relevance", 0.30)
             strong_rel = self.profile_cfg.get("strong_relevance", 0.50)
@@ -43,10 +45,13 @@ class ReportGenerator:
                 reverse=True,
             )
             clusters = enriched[:top_n]
+            # Domain-hit posts the RAG classifier dropped before clustering —
+            # scanned straight from `posts`, independent of the classifier gate.
+            domain_section = self._render_domain_hit_section(min_rel, top_n)
         else:
             clusters = clusters[:top_n]
 
-        if not clusters:
+        if not clusters and not domain_section:
             return "# Market Opportunity Report\n\nNo opportunities found above threshold.\n"
 
         title_suffix = f" ({self.profile})" if self.profile else ""
@@ -132,9 +137,66 @@ class ReportGenerator:
             lines.append("---")
             lines.append("")
 
+        if domain_section:
+            lines.extend(domain_section)
+
         return "\n".join(lines)
 
     # --- Lienclear profile helpers -------------------------------------------------
+
+    def _render_domain_hit_section(self, min_rel: float, top_n: int) -> list[str]:
+        """Render posts whose text hits Lienclear domain keywords, scored directly.
+
+        Domain detection (`compute_lienclear_relevance`) is pure regex and does
+        not depend on the RAG pain-point classifier. Scanning `posts` here
+        recovers on-topic posts the classifier filtered out before they could
+        reach a cluster — the complete raw domain signal in the corpus.
+        """
+        cur = self.db.conn.execute(
+            "SELECT reddit_id, title, body, subreddit, url, score FROM posts"
+        )
+        hits = []
+        for row in cur.fetchall():
+            lc = compute_lienclear_relevance(
+                row["title"] or "", row["body"] or "", row["subreddit"] or ""
+            )
+            if lc["domain_hit"] and lc["score"] >= min_rel:
+                hits.append((row, lc))
+        if not hits:
+            return []
+        hits.sort(key=lambda rl: rl[1]["score"], reverse=True)
+        hits = hits[:top_n]
+
+        lines = [
+            "## Domain-Hit Posts",
+            "",
+            "Posts whose text matches Lienclear domain keywords (lien waiver, AIA "
+            "G702/G703, retainage, mechanics lien, pay-when-paid), scored directly "
+            "by `compute_lienclear_relevance` — independent of the generic "
+            "pain-point classifier. This is the complete raw domain signal in the "
+            "corpus.",
+            "",
+        ]
+        for i, (row, lc) in enumerate(hits, 1):
+            title = (row["title"] or "(no title)")[:80]
+            lines.append(
+                f"{i}. [r/{row['subreddit']}] \"{title}\" — "
+                f"relevance {lc['score']:.2f} (↑ {row['score'] or 0})"
+            )
+            facets = []
+            if lc.get("states"):
+                facets.append("States: " + ", ".join(lc["states"]))
+            if lc.get("role"):
+                facets.append(f"Role: {lc['role']}")
+            if lc.get("dollar_anchors"):
+                facets.append("$ anchors: " + ", ".join(lc["dollar_anchors"]))
+            if lc.get("competitor_mentions"):
+                facets.append("Competitors: " + ", ".join(lc["competitor_mentions"]))
+            if facets:
+                lines.append(f"   - {' | '.join(facets)}")
+            lines.append(f"   - URL: {row['url'] or 'N/A'}")
+        lines.extend(["", "---", ""])
+        return lines
 
     def _aggregate_lienclear_meta(self, cluster_id: int) -> dict:
         """Aggregate per-cluster Lienclear signal from matched_patterns JSON blobs."""
