@@ -28,6 +28,7 @@ from analysis.clustering import PainPointClusterer
 from discovery.subreddit_finder import SubredditFinder
 from export.report import ReportGenerator
 from export.competitor_gaps import CompetitorGapReport
+from export.seo_phrases import SEOPhraseReport
 
 console = Console()
 
@@ -300,6 +301,32 @@ def lienclear_competitor_gaps(output, posts_per_competitor, quotes_per_competito
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(report, encoding="utf-8")
     console.print(f"[bold green]Competitor gap report exported to {output}[/bold green]")
+    db.close()
+
+
+@cli.command("lienclear-seo-phrases")
+@click.option(
+    "--output", "-o",
+    default="data/lienclear_seo_phrases.csv",
+    help="Output CSV path",
+)
+@click.option(
+    "--min-relevance", default=0.30, show_default=True,
+    help="Minimum lienclear_relevance score for a post to feed the phrase extractor",
+)
+@click.option(
+    "--top", "-n", default=100, show_default=True,
+    help="Top N phrases to export, ranked by frequency × avg_relevance",
+)
+def lienclear_seo_phrases(output, min_relevance, top):
+    """Export SEO bigram/trigram candidates from domain-hit posts (W5-8)."""
+    db = Database()
+    report = SEOPhraseReport(
+        db, min_relevance=min_relevance, top_n=top,
+    ).generate()
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    Path(output).write_text(report, encoding="utf-8")
+    console.print(f"[bold green]SEO phrase report exported to {output}[/bold green]")
     db.close()
 
 
