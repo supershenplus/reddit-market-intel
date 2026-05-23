@@ -27,6 +27,7 @@ from analysis.market_signals import (
 from analysis.clustering import PainPointClusterer
 from discovery.subreddit_finder import SubredditFinder
 from export.report import ReportGenerator
+from export.competitor_gaps import CompetitorGapReport
 
 console = Console()
 
@@ -271,6 +272,34 @@ def export(top, output, min_score, profile):
     if profile != "default":
         console.print(f"[dim]Profile: {profile}[/dim]")
     console.print(f"[dim]Open in Claude Code: 'Analyze {output} for market opportunities'[/dim]")
+    db.close()
+
+
+@cli.command("lienclear-competitor-gaps")
+@click.option(
+    "--output", "-o",
+    default="data/lienclear_competitor_gaps.md",
+    help="Output markdown path",
+)
+@click.option(
+    "--posts-per-competitor", default=5, show_default=True,
+    help="How many top pain-pointed posts to show per competitor",
+)
+@click.option(
+    "--quotes-per-competitor", default=5, show_default=True,
+    help="How many negative-quote excerpts to show per competitor",
+)
+def lienclear_competitor_gaps(output, posts_per_competitor, quotes_per_competitor):
+    """Export a per-competitor gap report (W5-7) — markdown to disk."""
+    db = Database()
+    report = CompetitorGapReport(
+        db,
+        posts_per_competitor=posts_per_competitor,
+        quotes_per_competitor=quotes_per_competitor,
+    ).generate()
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    Path(output).write_text(report, encoding="utf-8")
+    console.print(f"[bold green]Competitor gap report exported to {output}[/bold green]")
     db.close()
 
 
