@@ -6,6 +6,7 @@ from analysis.market_signals import (
     compute_solution_simplicity,
     compute_market_size_score,
     compute_lienclear_relevance,
+    classify_lienclear_phase,
 )
 
 
@@ -235,6 +236,39 @@ class TestLienclearRelevance:
         )
         assert r["domain_hit"] is True
         assert r["score"] >= 0.40
+
+    def test_phase_1_lien_waiver_only(self):
+        # Waiver/lien-only post is Phase 1 (foundational layer).
+        assert classify_lienclear_phase(
+            "Need a lien waiver template", "California conditional progress waiver"
+        ) == 1
+
+    def test_phase_2_aia_pay_app(self):
+        assert classify_lienclear_phase(
+            "AIA G702 pay app rejected by GC",
+            "schedule of values doesn't tie out",
+        ) == 2
+
+    def test_phase_3_docusign_or_gc_portal(self):
+        assert classify_lienclear_phase(
+            "Anyone integrate DocuSign with lien waiver workflow?", "",
+        ) == 3
+        assert classify_lienclear_phase(
+            "GC portal access for subs", "submit pay apps through their portal"
+        ) == 3
+
+    def test_highest_phase_wins_on_multi_hit(self):
+        # Waiver (Phase 1) + G702 (Phase 2) — should classify as Phase 2.
+        assert classify_lienclear_phase(
+            "Lien waiver and AIA G702 workflow",
+            "we generate the waiver after the pay app is approved",
+        ) == 2
+
+    def test_no_phase_pattern_returns_none(self):
+        assert classify_lienclear_phase("Bread baking tips", "yeast and flour") is None
+
+    def test_empty_text_returns_none(self):
+        assert classify_lienclear_phase("", "") is None
 
     def test_bookkeeping_texas_role_does_not_leak(self):
         # Regression for the 2026-05-12 smoke test false positive:

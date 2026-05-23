@@ -185,6 +185,42 @@ LIENCLEAR_DOMAIN_KEYWORDS = [
     r"\bprogress (?:billing|payments?)\b",
 ]
 
+# Phase classification — partitions domain-hit posts into ProductBlueprint
+# build phases so the report surfaces "what to build NEXT" not just
+# "what's painful". Highest-phase-wins on multi-hit (later phases imply the
+# earlier foundation exists, so a post mentioning G702 alongside waivers
+# is really a Phase-2 ask). Defaults to Phase 1 when a domain-hit post
+# matches no specific phase pattern (Phase 1 = baseline waiver/lien work).
+LIENCLEAR_PHASE_PATTERNS = {
+    1: [  # free waiver gen + SEO (BusinessPlan §5.1)
+        r"\blien waivers?\b", r"\bconditional waivers?\b", r"\bunconditional waivers?\b",
+        r"\bpreliminary notices?\b", r"\bnotice to owner\b",
+        r"\bmechanic'?s liens?\b", r"\blien rights?\b",
+    ],
+    2: [  # paid AIA pay-app + dashboard
+        r"\bAIA\s*G?70[23]\b", r"\bG702\b", r"\bG703\b",
+        r"\bschedule of values\b", r"\bSOV\b",
+        r"\bpay apps?\b", r"\bpay applications?\b",
+        r"\bprogress (?:billing|payments?)\b",
+        r"\bretainage\b", r"\bretention\b.{0,80}\b(?:withheld|held|release)\b",
+        r"\bpay-?when-?paid\b",
+    ],
+    3: [  # notifications + DocuSign + GC portal + integrations
+        r"\bDocuSign\b", r"\be[-\s]?sign(?:ature|ing)?\b",
+        r"\bGC portal\b", r"\bgeneral contractor portal\b",
+        r"\bautomated (?:notification|reminder|workflow|approval)\b",
+        r"\bapproval workflow\b",
+        r"\bAPI integration\b", r"\bsync with (?:QuickBooks|Procore|Sage)\b",
+        r"\bnotification (?:system|email|SMS)\b",
+    ],
+}
+
+LIENCLEAR_PHASE_LABELS = {
+    1: "Phase 1 — Free waiver gen + SEO",
+    2: "Phase 2 — Paid AIA pay-app + dashboard",
+    3: "Phase 3 — Notifications + DocuSign + GC portal",
+}
+
 # Score component weights for compute_lienclear_relevance (sum = 1.0)
 LIENCLEAR_RELEVANCE_WEIGHTS = {
     "domain_hit": 0.40,

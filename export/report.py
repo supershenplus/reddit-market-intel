@@ -5,13 +5,14 @@ from collections import Counter
 from datetime import datetime
 
 from storage.db import Database
-from analysis.market_signals import compute_lienclear_relevance
+from analysis.market_signals import compute_lienclear_relevance, classify_lienclear_phase
 
 try:
-    from config import PROFILES, LIENCLEAR_COMPETITORS
+    from config import PROFILES, LIENCLEAR_COMPETITORS, LIENCLEAR_PHASE_LABELS
 except ImportError:  # pragma: no cover — defensive for partial configs
     PROFILES = {}
     LIENCLEAR_COMPETITORS = []
+    LIENCLEAR_PHASE_LABELS = {}
 
 
 class ReportGenerator:
@@ -151,6 +152,11 @@ class ReportGenerator:
         not depend on the RAG pain-point classifier. Scanning `posts` here
         recovers on-topic posts the classifier filtered out before they could
         reach a cluster — the complete raw domain signal in the corpus.
+
+        Posts are bucketed into ProductBlueprint build phases (1/2/3) so the
+        report surfaces "what to build next" not just "what's painful".
+        Highest-phase-wins on multi-hit; phase-unclassified domain hits fall
+        into Phase 1 (the baseline waiver/lien layer).
         """
         cur = self.db.conn.execute(
             "SELECT reddit_id, title, body, subreddit, url, score FROM posts"
@@ -161,11 +167,15 @@ class ReportGenerator:
                 row["title"] or "", row["body"] or "", row["subreddit"] or ""
             )
             if lc["domain_hit"] and lc["score"] >= min_rel:
-                hits.append((row, lc))
+                phase = classify_lienclear_phase(row["title"] or "", row["body"] or "") or 1
+                hits.append((row, lc, phase))
         if not hits:
             return []
-        hits.sort(key=lambda rl: rl[1]["score"], reverse=True)
-        hits = hits[:top_n]
+        # Sort by (score, idx) descending; idx tiebreaker keeps tuple compare
+        # off the dict/row payloads if scores tie.
+        hits_with_idx = [(hl[1]["score"], i, hl) for i, hl in enumerate(hits)]
+        hits_with_idx.sort(reverse=True)
+        hits = [t[2] for t in hits_with_idx[:top_n]]
 
         lines = [
             "## Domain-Hit Posts",
@@ -173,29 +183,42 @@ class ReportGenerator:
             "Posts whose text matches Lienclear domain keywords (lien waiver, AIA "
             "G702/G703, retainage, mechanics lien, pay-when-paid), scored directly "
             "by `compute_lienclear_relevance` — independent of the generic "
-            "pain-point classifier. This is the complete raw domain signal in the "
-            "corpus.",
+            "pain-point classifier. Partitioned by ProductBlueprint build phase "
+            "(highest-phase-wins on multi-hit).",
             "",
         ]
-        for i, (row, lc) in enumerate(hits, 1):
-            title = (row["title"] or "(no title)")[:80]
-            lines.append(
-                f"{i}. [r/{row['subreddit']}] \"{title}\" — "
-                f"relevance {lc['score']:.2f} (↑ {row['score'] or 0})"
-            )
-            facets = []
-            if lc.get("states"):
-                facets.append("States: " + ", ".join(lc["states"]))
-            if lc.get("role"):
-                facets.append(f"Role: {lc['role']}")
-            if lc.get("dollar_anchors"):
-                facets.append("$ anchors: " + ", ".join(lc["dollar_anchors"]))
-            if lc.get("competitor_mentions"):
-                facets.append("Competitors: " + ", ".join(lc["competitor_mentions"]))
-            if facets:
-                lines.append(f"   - {' | '.join(facets)}")
-            lines.append(f"   - URL: {row['url'] or 'N/A'}")
-        lines.extend(["", "---", ""])
+
+        buckets: dict[int, list] = {1: [], 2: [], 3: []}
+        for row, lc, phase in hits:
+            buckets[phase].append((row, lc))
+
+        for phase in (1, 2, 3):
+            if not buckets[phase]:
+                continue
+            label = LIENCLEAR_PHASE_LABELS.get(phase, f"Phase {phase}")
+            lines.append(f"### {label} ({len(buckets[phase])} post{'s' if len(buckets[phase]) != 1 else ''})")
+            lines.append("")
+            for i, (row, lc) in enumerate(buckets[phase], 1):
+                title = (row["title"] or "(no title)")[:80]
+                lines.append(
+                    f"{i}. [r/{row['subreddit']}] \"{title}\" — "
+                    f"relevance {lc['score']:.2f} (↑ {row['score'] or 0})"
+                )
+                facets = []
+                if lc.get("states"):
+                    facets.append("States: " + ", ".join(lc["states"]))
+                if lc.get("role"):
+                    facets.append(f"Role: {lc['role']}")
+                if lc.get("dollar_anchors"):
+                    facets.append("$ anchors: " + ", ".join(lc["dollar_anchors"]))
+                if lc.get("competitor_mentions"):
+                    facets.append("Competitors: " + ", ".join(lc["competitor_mentions"]))
+                if facets:
+                    lines.append(f"   - {' | '.join(facets)}")
+                lines.append(f"   - URL: {row['url'] or 'N/A'}")
+            lines.append("")
+
+        lines.extend(["---", ""])
         return lines
 
     def _aggregate_lienclear_meta(self, cluster_id: int) -> dict:

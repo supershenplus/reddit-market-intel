@@ -18,6 +18,7 @@ from config import (
     LIENCLEAR_DOMAIN_KEYWORDS,
     LIENCLEAR_RELEVANCE_WEIGHTS,
     LIENCLEAR_ROLE_MULTIPLIERS,
+    LIENCLEAR_PHASE_PATTERNS,
 )
 
 _MONO_HIGH = [re.compile(p, re.IGNORECASE) for p in MONETIZATION_HIGH_KEYWORDS]
@@ -38,6 +39,10 @@ _LC_COMPETITORS = re.compile(
     r"\b(" + "|".join(re.escape(c) for c in LIENCLEAR_COMPETITORS) + r")\b",
     re.IGNORECASE,
 )
+_LC_PHASES = {
+    phase: [re.compile(p, re.IGNORECASE) for p in patterns]
+    for phase, patterns in LIENCLEAR_PHASE_PATTERNS.items()
+}
 
 # Role priority order — most specific buyer role wins. Kept as an explicit list
 # (not derived from dict key order) because match priority differs from config
@@ -96,6 +101,25 @@ def compute_market_size_score(subscribers: int, cross_sub_count: int) -> float:
     cross_bonus = min(0.30, (cross_sub_count - 1) * 0.10)
 
     return max(0.0, min(1.0, base + cross_bonus))
+
+
+def classify_lienclear_phase(title: str, body: str) -> int | None:
+    """Bucket a post into a Lienclear build phase (1/2/3) by pattern hit.
+
+    Returns None if the text matches no phase pattern (caller can default
+    to Phase 1 if the post is already known to be domain-hit). Highest
+    matched phase wins on multi-hit — a post mentioning AIA G702 alongside
+    lien waivers is really a Phase-2 ask (the waiver layer is assumed
+    to already exist when the user reaches for the pay-app form).
+    """
+    text = f"{title} {body}".strip()
+    if not text:
+        return None
+    hit_phases = []
+    for phase, patterns in _LC_PHASES.items():
+        if any(p.search(text) for p in patterns):
+            hit_phases.append(phase)
+    return max(hit_phases) if hit_phases else None
 
 
 def compute_lienclear_relevance(title: str, body: str, subreddit: str) -> dict:

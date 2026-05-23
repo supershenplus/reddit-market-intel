@@ -140,6 +140,35 @@ def test_export_profile_lienclear_surfaces_domain_hit(runner, cli_db, tmp_path):
     assert "lien waivers" in report
 
 
+def test_export_profile_lienclear_partitions_by_phase(runner, cli_db, tmp_path):
+    # One Phase 1 post (waiver only), one Phase 2 post (G702), one Phase 3
+    # (DocuSign + waiver). Highest-phase-wins means the DocuSign+waiver post
+    # buckets under Phase 3, not Phase 1.
+    _seed_post(cli_db, reddit_id="t3_p1", subreddit="Plumbing",
+               title="Need a California lien waiver template for my crew")
+    _seed_post(cli_db, reddit_id="t3_p2", subreddit="Construction",
+               title="AIA G702 pay app rejected — schedule of values issue")
+    _seed_post(cli_db, reddit_id="t3_p3", subreddit="Electricians",
+               title="DocuSign for lien waivers — anyone wired it up?")
+    out = tmp_path / "phases.md"
+
+    result = runner.invoke(
+        main.cli, ["export", "--profile", "lienclear", "--output", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+
+    report = out.read_text()
+    assert "Phase 1 — Free waiver gen + SEO" in report
+    assert "Phase 2 — Paid AIA pay-app + dashboard" in report
+    assert "Phase 3 — Notifications + DocuSign + GC portal" in report
+    # The DocuSign post bucketed into Phase 3, not Phase 1 (highest wins).
+    p3_idx = report.find("Phase 3 — Notifications")
+    p1_idx = report.find("Phase 1 — Free waiver gen")
+    assert p3_idx > p1_idx  # phases rendered in 1,2,3 order
+    docusign_idx = report.find("DocuSign for lien waivers")
+    assert docusign_idx > p3_idx  # the DocuSign post appears under Phase 3
+
+
 def test_export_profile_default_omits_domain_hit(runner, cli_db, tmp_path):
     _seed_post(cli_db, reddit_id="t3_lien", subreddit="Contractor", title=_DOMAIN_TITLE)
     out = tmp_path / "default.md"
