@@ -52,6 +52,68 @@ Append-only ADR log. Add entries when non-obvious architectural choices are made
 **Why:** Architectural refactor to feed comment text into the scorer was about to ship "to fix" a thin signal. Cheap diagnostic (one `for row in conn.execute("SELECT body FROM comments"):` loop) showed augmentation would not move the needle. Surfaced the number to the user, killed the refactor before commit. Real bottleneck is upstream RAG classifier filtering construction posts, not comment coverage.
 **Rejected:** Concat top-N comment bodies into augmented_body (refactor for ~0% signal gain); synthetic pain_point insertion for unclassified-but-domain-hit posts (couples Lienclear logic to pain_points lifecycle, dilutes cluster quality with off-topic text).
 
+## 2026-05-23: Facet-only pattern over scoring-weight integration for new signals
+
+**Choice:** New signal layers (DIY-evidence, urgency, frequency, and the W5-7
+heat-signal enrichment) ship as diagnostic facets on the dict returned by
+`compute_lienclear_relevance` — captured patterns are stored in
+`matched_patterns.lienclear`, surfaced in per-post and per-cluster sections
+of the lienclear report, and aggregated as `<facet>_rate` on cluster meta.
+They do **not** enter the relevance score weight.
+**Why:** Adding to `SCORING_WEIGHTS` or `LIENCLEAR_RELEVANCE_WEIGHTS` would
+(a) require renormalizing existing weights (which shifts every historical
+pain_point's score and breaks cross-snapshot comparability), (b) require
+schema migration + a `--force` re-analyze backfill, and (c) lock in a weight
+value before any corpus signal density is measured. The facet-only path ships
+the data on the next export with zero migration, lets the user eyeball signal
+density first, and weight tuning can happen later once the actual hit rate is
+known. The W5-7 enrichment also added a live-rescan fallback so older
+pain_points light up without `--force` re-analyze.
+**Rejected:** Adding new dimensions to `SCORING_WEIGHTS` immediately (weight
+guesses without corpus measurement); requiring `--force` re-analyze to use
+new facets (slow + couples signal addition to re-classification); skipping
+extraction entirely until weights are validated (no signal at all defeats
+the point of extraction).
+
+## 2026-05-23: Cluster identity = label, not id, in delta snapshots
+
+**Choice:** `analysis/cluster_delta.py` matches clusters between snapshots by
+`label`, not by `id`. The compute_delta function builds `by_label` dicts and
+diffs membership.
+**Why:** `clusters.id` is a SQLite AUTOINCREMENT — it gets re-issued from
+scratch on every `analyze --force` (since the clusters table is dropped and
+rebuilt). A cluster about lien waivers might be id=42 in one snapshot and
+id=617 in the next. Label is the only field that stays stable across re-runs.
+Labels can still drift slightly when cluster composition shifts (different
+top TF-IDF terms win the label slot), which produces some false NEW/DEAD
+churn — acceptable noise for a monthly cadence; the bellwether-chatter and
+score-change buckets are more reliable signals anyway.
+**Rejected:** id-based matching (breaks on every `--force` run); content-
+hash matching (over-engineered for monthly cadence); requiring a stable
+cluster_uuid column (schema migration, doesn't survive --force without
+extra plumbing).
+
+## 2026-05-23: Bellwether competitors = Levelset + Procore for W5-12 thesis watch
+
+**Choice:** `THESIS_BELLWETHER_COMPETITORS = ("Levelset", "Procore")` —
+the W5-12 thesis-watch sub-section fires when either goes silent
+(`baseline > 0 → current = 0`) or declines materially (`Δ ≤ -3 with
+baseline ≥ 5`).
+**Why:** Per the lienclear startup thesis, two macro signals open and keep
+the market gap open: (a) the **Levelset acquisition vacuum** — Levelset was
+the dominant DIY-construction-friendly lien-waiver tool and was acquired by
+Procore in 2021; if Levelset chatter dies down on Reddit, the vacuum is
+closing (someone else filled it, or trades stopped asking) and the thesis
+weakens. (b) the **Procore price umbrella** — Procore at enterprise pricing
+is the GC-side tool subs are forced to interact with; sustained
+dissatisfaction is the wedge for an SMB-priced alternative. Other named
+competitors (Buildertrend, Textura, GCPay, Siteline, Handle.com) inform
+positioning but aren't load-bearing for the core thesis.
+**Rejected:** Tracking all `LIENCLEAR_COMPETITORS` as bellwethers (dilutes
+the watch — most competitor mention deltas are noise); requiring user to
+configure bellwethers per-run (config drift); using a learned weight (no
+labeled data for "thesis-impactful" yet).
+
 ## 2026-05-21: Domain detection at the report layer, not via synthetic pain_points
 
 **Choice:** The lienclear report (`export/report.py`) renders a `Domain-Hit Posts` section by
