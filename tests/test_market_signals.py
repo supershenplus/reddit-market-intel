@@ -237,6 +237,50 @@ class TestLienclearRelevance:
         assert r["domain_hit"] is True
         assert r["score"] >= 0.40
 
+    def test_diy_evidence_excel_spreadsheet(self):
+        r = compute_lienclear_relevance(
+            "Looking for a better way than my Excel spreadsheet for lien waivers",
+            "I built a spreadsheet to track all the waivers but it's getting out of hand",
+            "Construction",
+        )
+        assert r["diy_evidence"]
+        assert any("spreadsheet" in d.lower() for d in r["diy_evidence"])
+
+    def test_diy_evidence_zapier(self):
+        r = compute_lienclear_relevance(
+            "Lien waiver automation with Zapier?",
+            "Using Zapier to glue DocuSign + QuickBooks for waivers",
+            "Construction",
+        )
+        assert any("Zapier" in d for d in r["diy_evidence"])
+
+    def test_diy_evidence_manual_workflow(self):
+        r = compute_lienclear_relevance(
+            "Tired of manually creating lien waivers",
+            "I manually fill out each waiver every month, hours of work",
+            "Construction",
+        )
+        assert r["diy_evidence"]
+        assert any("manually" in d.lower() for d in r["diy_evidence"])
+
+    def test_diy_evidence_empty_when_absent(self):
+        r = compute_lienclear_relevance(
+            "Simple lien waiver question", "What form does CA require?", "Construction",
+        )
+        assert r["diy_evidence"] == []
+
+    def test_diy_evidence_does_not_perturb_score(self):
+        # DIY hits are a diagnostic facet, not a scoring component. A post
+        # with DIY signal should score the same as one without (modulo the
+        # actual lien/state/role signals).
+        r_with = compute_lienclear_relevance(
+            "Lien waiver template", "I built a spreadsheet for our pay apps", "Construction",
+        )
+        r_without = compute_lienclear_relevance(
+            "Lien waiver template", "", "Construction",
+        )
+        assert r_with["score"] == r_without["score"]
+
     def test_phase_1_lien_waiver_only(self):
         # Waiver/lien-only post is Phase 1 (foundational layer).
         assert classify_lienclear_phase(

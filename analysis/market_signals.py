@@ -19,6 +19,7 @@ from config import (
     LIENCLEAR_RELEVANCE_WEIGHTS,
     LIENCLEAR_ROLE_MULTIPLIERS,
     LIENCLEAR_PHASE_PATTERNS,
+    LIENCLEAR_DIY_PATTERNS,
 )
 
 _MONO_HIGH = [re.compile(p, re.IGNORECASE) for p in MONETIZATION_HIGH_KEYWORDS]
@@ -43,6 +44,7 @@ _LC_PHASES = {
     phase: [re.compile(p, re.IGNORECASE) for p in patterns]
     for phase, patterns in LIENCLEAR_PHASE_PATTERNS.items()
 }
+_LC_DIY = [re.compile(p, re.IGNORECASE) for p in LIENCLEAR_DIY_PATTERNS]
 
 # Role priority order — most specific buyer role wins. Kept as an explicit list
 # (not derived from dict key order) because match priority differs from config
@@ -136,6 +138,7 @@ def compute_lienclear_relevance(title: str, body: str, subreddit: str) -> dict:
         "role": None,
         "competitor_mentions": [],
         "domain_hit": False,
+        "diy_evidence": [],
     }
     if not text:
         return out
@@ -182,6 +185,14 @@ def compute_lienclear_relevance(title: str, body: str, subreddit: str) -> dict:
     comp_hits = sorted({m.group(1) for m in _LC_COMPETITORS.finditer(text)})
     out["competitor_mentions"] = comp_hits
     components["competitor_mention"] = min(1.0, len(comp_hits) * 0.5) if comp_hits else 0.0
+
+    # DIY workaround evidence — facet only, doesn't enter the score weight.
+    # Captured pattern matches go in the returned dict so the report can
+    # surface them; weight tuning deferred until corpus signal is measured.
+    diy_hits = sorted({
+        m.group(0) for p in _LC_DIY for m in p.finditer(text)
+    })
+    out["diy_evidence"] = diy_hits
 
     raw_score = sum(w[k] * v for k, v in components.items())
 

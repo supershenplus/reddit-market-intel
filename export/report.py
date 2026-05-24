@@ -213,6 +213,8 @@ class ReportGenerator:
                     facets.append("$ anchors: " + ", ".join(lc["dollar_anchors"]))
                 if lc.get("competitor_mentions"):
                     facets.append("Competitors: " + ", ".join(lc["competitor_mentions"]))
+                if lc.get("diy_evidence"):
+                    facets.append("DIY: " + ", ".join(lc["diy_evidence"]))
                 if facets:
                     lines.append(f"   - {' | '.join(facets)}")
                 lines.append(f"   - URL: {row['url'] or 'N/A'}")
@@ -236,7 +238,9 @@ class ReportGenerator:
         roles: Counter = Counter()
         dollars: Counter = Counter()
         competitors: Counter = Counter()
+        diy: Counter = Counter()
         domain_hits = 0
+        diy_hit_posts = 0
         total = 0
         for row in cur.fetchall():
             total += 1
@@ -261,6 +265,11 @@ class ReportGenerator:
                 key = comp.lower()
                 if key in canonical:
                     competitors[canonical[key]] += 1
+            post_diy = lc.get("diy_evidence") or []
+            for d in post_diy:
+                diy[d] += 1
+            if post_diy:
+                diy_hit_posts += 1
             if lc.get("domain_hit"):
                 domain_hits += 1
         avg_relevance = sum(relevances) / len(relevances) if relevances else 0.0
@@ -268,10 +277,12 @@ class ReportGenerator:
             "avg_relevance": avg_relevance,
             "post_count": total,
             "domain_hit_rate": (domain_hits / total) if total else 0.0,
+            "diy_evidence_rate": (diy_hit_posts / total) if total else 0.0,
             "states": states.most_common(5),
             "roles": roles.most_common(5),
             "dollar_anchors": dollars.most_common(5),
             "competitors": competitors.most_common(5),
+            "diy_evidence": diy.most_common(5),
         }
 
     def _render_lienclear_facets(self, lc: dict) -> list[str]:
@@ -284,7 +295,11 @@ class ReportGenerator:
             lines.append("**$ anchors**: " + ", ".join(f"{d} ({n})" for d, n in lc["dollar_anchors"]))
         if lc.get("competitors"):
             lines.append("**Competitor mentions**: " + ", ".join(f"{c} ({n})" for c, n in lc["competitors"]))
+        if lc.get("diy_evidence"):
+            lines.append("**DIY workarounds**: " + ", ".join(f"{d} ({n})" for d, n in lc["diy_evidence"]))
         lines.append(f"**Domain-hit rate**: {lc.get('domain_hit_rate', 0):.0%}")
+        if lc.get("diy_evidence_rate", 0) > 0:
+            lines.append(f"**DIY-evidence rate**: {lc.get('diy_evidence_rate', 0):.0%}")
         return lines
 
     def _render_competitor_gap_section(self) -> list[str]:

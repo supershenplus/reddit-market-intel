@@ -221,6 +221,36 @@ LIENCLEAR_PHASE_LABELS = {
     3: "Phase 3 — Notifications + DocuSign + GC portal",
 }
 
+# DIY-workaround signal — strongest market-validation evidence per the
+# lienclear thesis. When someone says "I built a spreadsheet for our pay apps"
+# they are explicitly the willing-to-buy ICP: they have the pain, they spent
+# time hacking around it, and they would pay to stop hacking. Extracted as
+# a facet only (not summed into the relevance score) so the data surfaces
+# without perturbing existing scoring behavior — weight tunable later.
+LIENCLEAR_DIY_PATTERNS = [
+    # Spreadsheet / Excel / Word / Google Sheets workarounds
+    r"\b(?:Excel|spreadsheet) (?:template|hack|workflow|workaround|file|sheet)\b",
+    r"\bWord (?:doc|template|workaround)\b",
+    r"\bGoogle (?:Sheets?|Docs?)\b",
+    r"\bin (?:Excel|Sheets?|Word)\b",
+    # QuickBooks hacks
+    r"\bQuickBooks (?:workaround|hack|template|custom)\b",
+    # First-person build / hack patterns
+    r"\bI (?:built|made|created|use|hacked|set up|coded|wrote) (?:a|my own|an?|our|the)\s+(?:spreadsheet|template|form|system|tool|macro|script|workflow|process)\b",
+    r"\bwe (?:built|made|created|use|hacked|set up|coded|wrote) (?:a|our|the)\s+(?:spreadsheet|template|form|system|tool|macro|script|workflow|process)\b",
+    # Generic automation / glue tools used as a Lienclear gap-filler
+    r"\bZapier\b",
+    r"\bMake\.com\b",
+    r"\bn8n\b",
+    r"\bmail merge\b",
+    # Manual labor signal
+    r"\bmanually (?:do|fill out|create|update|send|generate|track)\b",
+    r"\bcopy.?paste\b",
+    r"\bhand[-\s]?type\b",
+    # Explicit "doing it in" pattern
+    r"\bdoing (?:it|them|this|these) in (?:Excel|Sheets?|Word|QuickBooks)\b",
+]
+
 # Score component weights for compute_lienclear_relevance (sum = 1.0)
 LIENCLEAR_RELEVANCE_WEIGHTS = {
     "domain_hit": 0.40,
