@@ -18,17 +18,24 @@ plus a `snapshotted_at` ISO timestamp at the top level.
 """
 
 import json
+from collections import Counter
 from datetime import datetime, date
 from pathlib import Path
 
 from storage.db import Database
-from config import DATA_DIR
+from config import DATA_DIR, LIENCLEAR_COMPETITORS
 
 
 SNAPSHOT_DIR = DATA_DIR / "cluster_snapshots"
 
 # How much avg_opportunity_score must move to count as a meaningful change.
 SCORE_DELTA_THRESHOLD = 0.10
+
+# Competitors whose chatter trend is load-bearing for the lienclear thesis.
+# Levelset acquisition vacuum is the core opening — if Levelset chatter
+# dies down between snapshots, the thesis weakens. Procore is the price
+# umbrella — if dissatisfaction stays high, the gap stays open.
+THESIS_BELLWETHER_COMPETITORS = ("Levelset", "Procore")
 
 
 def snapshot_path(snapshot_date: str | date | None = None) -> Path:
@@ -41,13 +48,15 @@ def snapshot_path(snapshot_date: str | date | None = None) -> Path:
 
 
 def save_snapshot(db: Database, snapshot_date: str | date | None = None) -> Path:
-    """Persist current clusters table to a JSON snapshot file. Returns the path."""
+    """Persist current clusters + competitor mention counts to a JSON snapshot."""
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     clusters = db.get_all_clusters()
+    competitor_counts = compute_competitor_counts(db)
     path = snapshot_path(snapshot_date)
     payload = {
         "snapshotted_at": datetime.now().isoformat(),
         "clusters": clusters,
+        "competitor_counts": competitor_counts,
     }
     path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     return path
@@ -59,6 +68,37 @@ def load_snapshot(path: Path) -> list[dict]:
         return []
     payload = json.loads(path.read_text(encoding="utf-8"))
     return payload.get("clusters", [])
+
+
+def load_snapshot_competitor_counts(path: Path) -> dict[str, int]:
+    """Load per-competitor mention counts from a snapshot file. {} if missing."""
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload.get("competitor_counts", {})
+
+
+def compute_competitor_counts(db: Database) -> dict[str, int]:
+    """Sum per-competitor mention counts across all pain_points."""
+    canonical = {c.lower(): c for c in LIENCLEAR_COMPETITORS}
+    counts: Counter = Counter()
+    cur = db.conn.execute(
+        "SELECT matched_patterns FROM pain_points WHERE matched_patterns IS NOT NULL"
+    )
+    for row in cur.fetchall():
+        try:
+            parsed = json.loads(row["matched_patterns"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        lc = parsed.get("lienclear") if isinstance(parsed, dict) else None
+        if not lc:
+            continue
+        for comp in lc.get("competitor_mentions") or []:
+            canon = canonical.get(comp.lower())
+            if canon:
+                counts[canon] += 1
+    # Ensure every known competitor appears (zero counts surface "silence" too).
+    return {c: counts.get(c, 0) for c in LIENCLEAR_COMPETITORS}
 
 
 def compute_delta(current: list[dict], baseline: list[dict]) -> dict:
@@ -132,6 +172,25 @@ def compute_delta(current: list[dict], baseline: list[dict]) -> dict:
     }
 
 
+def compute_competitor_delta(
+    current_counts: dict[str, int], baseline_counts: dict[str, int]
+) -> list[dict]:
+    """Per-competitor mention-count delta. Returns list ordered by |delta| desc."""
+    all_competitors = set(current_counts) | set(baseline_counts)
+    rows = []
+    for comp in all_competitors:
+        cur = current_counts.get(comp, 0)
+        base = baseline_counts.get(comp, 0)
+        rows.append({
+            "competitor": comp,
+            "baseline": base,
+            "current": cur,
+            "delta": cur - base,
+            "is_bellwether": comp in THESIS_BELLWETHER_COMPETITORS,
+        })
+    return _sort_desc(rows, lambda r: abs(r["delta"]))
+
+
 def _sort_desc(items: list, extract) -> list:
     """Descending sort by an extracted scalar via tuple-tiebreaker form."""
     decorated = [(extract(it), i, it) for i, it in enumerate(items)]
@@ -140,10 +199,14 @@ def _sort_desc(items: list, extract) -> list:
 
 
 def render_delta_report(
-    delta: dict, baseline_date: str, current_date: str | None = None
+    delta: dict,
+    baseline_date: str,
+    current_date: str | None = None,
+    competitor_delta: list[dict] | None = None,
 ) -> str:
-    """Format a delta dict as a markdown report."""
+    """Format a delta dict + optional competitor-chatter delta as markdown."""
     current_date = current_date or date.today().isoformat()
+    competitor_delta = competitor_delta or []
     lines = [
         f"# Cluster Delta Report — {baseline_date} → {current_date}",
         "",
@@ -158,10 +221,11 @@ def render_delta_report(
         f"- **Dead clusters**: {len(delta['dead'])}",
         f"- **Score-changed**: {len(delta['score_changed'])} "
         f"(|delta| >= {SCORE_DELTA_THRESHOLD})",
-        "",
-        "---",
-        "",
     ]
+    if competitor_delta:
+        movers = sum(1 for r in competitor_delta if r["delta"] != 0)
+        lines.append(f"- **Competitor chatter moved**: {movers} of {len(competitor_delta)}")
+    lines.extend(["", "---", ""])
 
     if delta["new"]:
         lines.append("## New Clusters")
@@ -226,7 +290,52 @@ def render_delta_report(
             )
         lines.append("")
 
-    if not any(delta[k] for k in ("new", "grown", "dead", "score_changed")):
+    if competitor_delta:
+        lines.append("## Competitor Chatter Tracker")
+        lines.append("")
+        lines.append(
+            "Per-competitor mention counts (summed across all pain_points). "
+            "Bellwether competitors ("
+            + ", ".join(THESIS_BELLWETHER_COMPETITORS)
+            + ") are load-bearing for the lienclear thesis — Levelset "
+            "acquisition vacuum is the core opening; Procore dissatisfaction "
+            "is the price umbrella."
+        )
+        lines.append("")
+        for r in competitor_delta:
+            arrow = "↑" if r["delta"] > 0 else ("↓" if r["delta"] < 0 else "→")
+            bell = " ⚑" if r["is_bellwether"] else ""
+            lines.append(
+                f"- **{r['competitor']}**{bell} — "
+                f"{r['baseline']} → {r['current']} "
+                f"({arrow} {abs(r['delta'])})"
+            )
+        # Thesis-validation flags — surface when a bellwether competitor's
+        # chatter drops to zero or declines materially.
+        thesis_warnings = []
+        for r in competitor_delta:
+            if not r["is_bellwether"]:
+                continue
+            if r["baseline"] > 0 and r["current"] == 0:
+                thesis_warnings.append(
+                    f"**{r['competitor']} chatter went silent** "
+                    f"({r['baseline']} → 0) — re-examine thesis assumptions."
+                )
+            elif r["delta"] <= -3 and r["baseline"] >= 5:
+                thesis_warnings.append(
+                    f"**{r['competitor']} chatter declined materially** "
+                    f"({r['baseline']} → {r['current']}, {r['delta']:+d}) — "
+                    f"watch the trend."
+                )
+        if thesis_warnings:
+            lines.append("")
+            lines.append("### Thesis Watch")
+            lines.append("")
+            for w in thesis_warnings:
+                lines.append(f"- {w}")
+        lines.append("")
+
+    if not any(delta[k] for k in ("new", "grown", "dead", "score_changed")) and not competitor_delta:
         lines.append("No cluster changes since baseline.")
         lines.append("")
 

@@ -10,10 +10,14 @@ import main
 from analysis.cluster_delta import (
     save_snapshot,
     load_snapshot,
+    load_snapshot_competitor_counts,
     snapshot_path,
     compute_delta,
+    compute_competitor_counts,
+    compute_competitor_delta,
     render_delta_report,
     SCORE_DELTA_THRESHOLD,
+    THESIS_BELLWETHER_COMPETITORS,
 )
 from storage.db import Database
 
@@ -168,6 +172,114 @@ def test_report_includes_all_section_headers_when_populated():
     assert "+5" in report
     assert "old cluster" in report
     assert "↑ 0.20" in report or "↑ 0.2" in report
+
+
+# --- competitor chatter tracker (W5-12) -----------------------------------------
+
+def _seed_post_and_pp(db, reddit_id, competitors=None):
+    db.insert_post({
+        "reddit_id": reddit_id, "subreddit": "Construction",
+        "title": f"post {reddit_id}", "body": "", "author": "u",
+        "url": f"https://r/{reddit_id}", "score": 1, "num_comments": 0,
+        "created_utc": time.time(),
+    })
+    post = db.get_post_by_reddit_id(reddit_id)
+    lc = {
+        "score": 0.5, "states": [], "dollar_anchors": [], "role": None,
+        "competitor_mentions": competitors or [], "domain_hit": True, "diy_evidence": [],
+    }
+    db.insert_pain_point({
+        "post_id": post["id"],
+        "matched_patterns": json.dumps({"intent": [], "lienclear": lc}),
+        "intent_category": "seeking_tool", "opportunity_score": 0.5,
+        "sentiment_intensity": 0.4, "validation_score": 0.3,
+        "recency_weight": 0.9, "cross_sub_count": 1, "cluster_id": None,
+        "monetization_score": 0.5, "solution_simplicity": 0.5, "market_size_score": 0.3,
+    })
+
+
+def test_compute_competitor_counts_sums_across_pain_points(db):
+    _seed_post_and_pp(db, "t3_a", competitors=["Procore"])
+    _seed_post_and_pp(db, "t3_b", competitors=["Procore", "Levelset"])
+    counts = compute_competitor_counts(db)
+    assert counts["Procore"] == 2
+    assert counts["Levelset"] == 1
+    # Every known competitor should appear, with 0 for unhit ones
+    assert "Buildertrend" in counts and counts["Buildertrend"] == 0
+
+
+def test_save_snapshot_includes_competitor_counts(db, temp_snapshot_dir):
+    _seed_post_and_pp(db, "t3_a", competitors=["Procore"])
+    _seed_cluster(db, "any cluster")
+    path = save_snapshot(db, "2026-05-23")
+    payload = json.loads(path.read_text())
+    assert "competitor_counts" in payload
+    assert payload["competitor_counts"]["Procore"] == 1
+
+
+def test_load_snapshot_competitor_counts(db, temp_snapshot_dir):
+    _seed_post_and_pp(db, "t3_a", competitors=["Levelset"])
+    path = save_snapshot(db, "2026-05-23")
+    counts = load_snapshot_competitor_counts(path)
+    assert counts["Levelset"] == 1
+
+
+def test_compute_competitor_delta_surfaces_movers():
+    baseline = {"Procore": 10, "Levelset": 5, "Buildertrend": 0}
+    current = {"Procore": 12, "Levelset": 0, "Buildertrend": 3}
+    delta = compute_competitor_delta(current, baseline)
+    by_comp = {r["competitor"]: r for r in delta}
+    assert by_comp["Procore"]["delta"] == 2
+    assert by_comp["Levelset"]["delta"] == -5
+    assert by_comp["Buildertrend"]["delta"] == 3
+    assert by_comp["Levelset"]["is_bellwether"]
+    assert not by_comp["Buildertrend"]["is_bellwether"]
+
+
+def test_competitor_delta_ordered_by_abs_delta():
+    baseline = {"Procore": 10, "Levelset": 5, "Buildertrend": 2}
+    current = {"Procore": 10, "Levelset": 0, "Buildertrend": 4}
+    delta = compute_competitor_delta(current, baseline)
+    # |Δ| = Procore 0, Levelset 5, Buildertrend 2 → sort desc
+    assert delta[0]["competitor"] == "Levelset"
+    assert delta[-1]["competitor"] == "Procore"
+
+
+def test_thesis_watch_fires_on_bellwether_silence():
+    baseline = {"Levelset": 8, "Procore": 5}
+    current = {"Levelset": 0, "Procore": 5}
+    delta = compute_competitor_delta(current, baseline)
+    report = render_delta_report(
+        {"new": [], "grown": [], "dead": [], "score_changed": []},
+        baseline_date="2026-04-01",
+        competitor_delta=delta,
+    )
+    assert "Thesis Watch" in report
+    assert "Levelset chatter went silent" in report
+
+
+def test_thesis_watch_silent_when_bellwether_stable():
+    baseline = {"Levelset": 5, "Procore": 5}
+    current = {"Levelset": 6, "Procore": 5}
+    delta = compute_competitor_delta(current, baseline)
+    report = render_delta_report(
+        {"new": [], "grown": [], "dead": [], "score_changed": []},
+        baseline_date="2026-04-01",
+        competitor_delta=delta,
+    )
+    assert "Thesis Watch" not in report
+
+
+def test_competitor_chatter_section_in_report():
+    delta = compute_competitor_delta({"Procore": 10}, {"Procore": 5})
+    report = render_delta_report(
+        {"new": [], "grown": [], "dead": [], "score_changed": []},
+        baseline_date="2026-04-01",
+        competitor_delta=delta,
+    )
+    assert "## Competitor Chatter Tracker" in report
+    assert "Procore" in report
+    assert "↑ 5" in report or "↑ 5)" in report
 
 
 # --- CLI integration ------------------------------------------------------------

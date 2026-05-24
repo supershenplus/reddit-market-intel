@@ -32,8 +32,11 @@ from export.seo_phrases import SEOPhraseReport
 from analysis.cluster_delta import (
     save_snapshot,
     load_snapshot,
+    load_snapshot_competitor_counts,
     snapshot_path,
     compute_delta,
+    compute_competitor_counts,
+    compute_competitor_delta,
     render_delta_report,
 )
 
@@ -368,9 +371,18 @@ def delta(baseline, output):
         db.close()
         return
     baseline_clusters = load_snapshot(baseline_path)
+    baseline_competitor_counts = load_snapshot_competitor_counts(baseline_path)
     current = db.get_all_clusters()
+    current_competitor_counts = compute_competitor_counts(db)
     delta_dict = compute_delta(current, baseline_clusters)
-    report = render_delta_report(delta_dict, baseline_date=baseline)
+    competitor_delta = compute_competitor_delta(
+        current_competitor_counts, baseline_competitor_counts,
+    )
+    report = render_delta_report(
+        delta_dict,
+        baseline_date=baseline,
+        competitor_delta=competitor_delta,
+    )
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(report, encoding="utf-8")
     console.print(f"[bold green]Delta report exported to {output}[/bold green]")
