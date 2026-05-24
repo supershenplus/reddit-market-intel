@@ -33,11 +33,11 @@
 ## W4 — Scoring matrix v2 (scope expansion — tons missed in v1)
 
 - [ ] **W4-1** Competition density signal — count how many products already solve this (search comment mentions)
-- [ ] **W4-2** Urgency signal — "asap", "right now", "blocking me", "losing money" → higher score
+- [~] **W4-2** Urgency signal shipped as a lienclear facet (`urgency` on compute_lienclear_relevance — blocking/blocked, losing money, GC won't pay, DSO, 30/60/90 days late, cash flow). Generic-pipeline integration (schema column + scorer weight) deferred — facet-only ships immediately without disrupting existing scores.
 - [ ] **W4-3** Specificity signal — vague pain ("productivity") vs specific ("need tool to auto-send invoice after Calendly booking")
 - [ ] **W4-4** Regulatory/compliance signal — HIPAA, GDPR, SOC2 mentions → higher willingness to pay
 - [ ] **W4-5** Geographic signal — US/EU-centric = larger addressable market
-- [ ] **W4-6** Frequency signal — "every day", "constantly", "weekly", vs "once in a while"
+- [~] **W4-6** Frequency signal shipped as a lienclear facet (`frequency` — every month/day/week, constantly, every project/pay app/invoice). Same facet-only treatment as W4-2 / W4-7.
 - [~] **W4-7** DIY evidence — *partial: shipped as a lienclear facet (`diy_evidence`) on `compute_lienclear_relevance`, not yet as a generic SCORING_WEIGHTS dimension*. Excel/Word/Sheets/QuickBooks/Zapier/Make/n8n/mail-merge/manually patterns extracted. v5 report surfaces "Excel template" on the goldmine AIA-billing post alongside Procore + Buildertrend mentions. Generic-pipeline integration (schema column, scorer weight, backfill) deferred — current facet-only ships the data without disrupting existing scores.
 - [ ] **W4-8** Price anchor signal — explicit $ amounts mentioned → monetization validation
 - [ ] **W4-9** Trending detection improvement — weekly post-count delta per cluster, not just boolean flag
@@ -65,12 +65,13 @@
   - **Willingness-to-pay anchors:** "$50/month", "$100/month", "would pay", "worth paying for"
 
 ### Scoring tuning for Lienclear domain
-- [ ] **W5-5** Add `lienclear_relevance_score` signal to `analysis/market_signals.py`:
+- [x] **W5-5** ~~Add `lienclear_relevance_score` signal~~ shipped — `compute_lienclear_relevance` with full facet set (states, dollar_anchors, role, competitor_mentions, domain_hit, diy_evidence, urgency, frequency). Beachhead-state boost, ICP role multipliers, domain-hit gate cap all in place.
+- [x] ~~Old W5-5 details:~~
   - +weight for state mentions in beachhead 5 (CA/TX/FL/NY/GA) and 12 statutory-form states (AZ/CA/FL/GA/MA/MI/MS/MO/MT/NV/TX/UT)
   - +weight for explicit dollar anchors $50–$200/mo (matches pricing tier)
   - +weight for firm-size cues (5–50 employees, $500K–$10M revenue, "small sub", "specialty trade")
   - −weight for GC-perspective posts (Lienclear ICP = sub, not GC) and homeowner posts
-- [ ] **W5-6** Rebalance `SCORING_WEIGHTS` for Lienclear runs (CLI flag `--profile lienclear`): boost monetization + market_size + new lienclear_relevance, lower generic frequency
+- [x] **W5-6** ~~Rebalance SCORING_WEIGHTS~~ shipped differently per [DECISIONS.md 2026-05-12](DECISIONS.md): profile overlays via `PROFILES["lienclear"]` dict + `--profile lienclear` CLI flag preserve cross-profile comparability without per-profile weight rebalancing.
 
 ### Outputs feeding Lienclear repo
 - [x] **W5-7** Competitor-gap export — `lienclear-competitor-gaps` CLI emits `data/lienclear_competitor_gaps.md` with per-competitor mention counts, top pain-pointed posts, negative quote excerpts. Real-corpus run: Procore 6 mentions, Buildertrend 4 mentions.
@@ -108,6 +109,7 @@
 
 > 1-line dated entries — newest first.
 
+- 2026-05-23 (W4-2/W4-6) — Urgency + frequency facets shipped on compute_lienclear_relevance (same facet-only pattern as DIY-evidence). v7 lienclear report now shows the goldmine cluster with **all 6 signal layers in one line**: Competitors (Buildertrend, Procore) · DIY (Excel template) · Urgency (cash flow, nightmare, right now) · Frequency (every month) · 100% domain-hit · 100% DIY-rate. Two more strong hits surfaced: "Struggling Estimator" (constantly, all the time) and "Commercial client hasn't paid by due date" (Today, past due). 6 new tests. The facet-only pattern (data first, weight tuning later) has now shipped 3 new lienclear signal layers cleanly without touching the scoring weights or schema once.
 - 2026-05-23 (W5-11/12) — Cluster snapshot + delta CLI + competitor sunset tracker shipped. `snapshot` + `delta` CLIs; snapshot JSON layout captures clusters + per-competitor mention counts. Delta surfaces NEW / GROWING / DEAD / SCORE_CHANGED sections plus Competitor Chatter Tracker with "Thesis Watch" sub-section firing when bellwethers (Levelset, Procore) decline. Today's baseline: 857 clusters; Procore 6, Buildertrend 4, Levelset 0. Foundation for monthly cadence — next session's baseline diff would be the first real signal. 24 new tests (16 W5-11 + 8 W5-12). 2 commits unpushed.
 - 2026-05-23 (cont.) — DIY-workaround evidence facet shipped (`diy_evidence` extraction in compute_lienclear_relevance; surfaced in per-post + per-cluster report sections; `diy_evidence_rate` aggregated). v6 lienclear report after `--force` re-analyze (5712 posts → 901 pain_points → 857 clusters) now shows the goldmine cluster with all three signals: Competitor mentions (Procore + Buildertrend), DIY workarounds (Excel template), 100% domain-hit + 100% DIY-evidence rate. Textbook ICP cluster materialized end-to-end. 2 commits unpushed (1e0ad48 DIY facet, 1d239d7 TODO partial mark). Facet-only — does NOT enter relevance score weight; W4-7 marked partial on TODO.
 - 2026-05-23 — W5-7/8/9 lienclear outputs shipped + W5-2 rescrape complete. Three CLI commands added: `lienclear-competitor-gaps`, `lienclear-seo-phrases`, `export --profile lienclear` (phase-bucketed). Corpus expanded 3636 → 5712 posts (+57%); 5005 unprocessed → 194 new pain_points → 857 clusters. lienclear-v4.md now surfaces 4 clusters (vs 2 in v3) and 6 domain-hit posts split Phase 1/Phase 2. 96 tests green (skipping 1 transformers-env-broken classifier test). 3 commits awaiting user-triggered `! git push origin master` (e66e33a, 79a9e08, fdda5ea). Friction: local secret-grep.js hook substring-matches on `monkeypatch`/`keyword`/`key=lambda` — cost 3 retry loops + 1 module rename; saved as feedback memory.
