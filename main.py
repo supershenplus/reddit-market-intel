@@ -29,6 +29,13 @@ from discovery.subreddit_finder import SubredditFinder
 from export.report import ReportGenerator
 from export.competitor_gaps import CompetitorGapReport
 from export.seo_phrases import SEOPhraseReport
+from analysis.cluster_delta import (
+    save_snapshot,
+    load_snapshot,
+    snapshot_path,
+    compute_delta,
+    render_delta_report,
+)
 
 console = Console()
 
@@ -327,6 +334,46 @@ def lienclear_seo_phrases(output, min_relevance, top):
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(report, encoding="utf-8")
     console.print(f"[bold green]SEO phrase report exported to {output}[/bold green]")
+    db.close()
+
+
+@cli.command()
+@click.option(
+    "--date", "snapshot_date", default=None,
+    help="Override snapshot date (YYYY-MM-DD). Default: today.",
+)
+def snapshot(snapshot_date):
+    """Snapshot current clusters table to `data/cluster_snapshots/<date>.json` (W5-11)."""
+    db = Database()
+    path = save_snapshot(db, snapshot_date)
+    console.print(f"[bold green]Cluster snapshot saved to {path}[/bold green]")
+    db.close()
+
+
+@cli.command()
+@click.option(
+    "--baseline", required=True,
+    help="Baseline snapshot date (YYYY-MM-DD) — must exist under data/cluster_snapshots/",
+)
+@click.option(
+    "--output", "-o", default="reports/delta_report.md",
+    help="Output markdown path",
+)
+def delta(baseline, output):
+    """Diff current clusters vs a prior snapshot (W5-11). Outputs NEW / GROWING / DEAD / SCORE_CHANGED report."""
+    db = Database()
+    baseline_path = snapshot_path(baseline)
+    if not baseline_path.exists():
+        console.print(f"[red]Baseline snapshot not found: {baseline_path}[/red]")
+        db.close()
+        return
+    baseline_clusters = load_snapshot(baseline_path)
+    current = db.get_all_clusters()
+    delta_dict = compute_delta(current, baseline_clusters)
+    report = render_delta_report(delta_dict, baseline_date=baseline)
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    Path(output).write_text(report, encoding="utf-8")
+    console.print(f"[bold green]Delta report exported to {output}[/bold green]")
     db.close()
 
 
