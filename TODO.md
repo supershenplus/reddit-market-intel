@@ -38,7 +38,7 @@
 - [ ] **W4-4** Regulatory/compliance signal — HIPAA, GDPR, SOC2 mentions → higher willingness to pay
 - [ ] **W4-5** Geographic signal — US/EU-centric = larger addressable market
 - [ ] **W4-6** Frequency signal — "every day", "constantly", "weekly", vs "once in a while"
-- [ ] **W4-7** DIY evidence — "I built a spreadsheet", "I use Zapier for this" → validated gap, someone's hacking around it
+- [~] **W4-7** DIY evidence — *partial: shipped as a lienclear facet (`diy_evidence`) on `compute_lienclear_relevance`, not yet as a generic SCORING_WEIGHTS dimension*. Excel/Word/Sheets/QuickBooks/Zapier/Make/n8n/mail-merge/manually patterns extracted. v5 report surfaces "Excel template" on the goldmine AIA-billing post alongside Procore + Buildertrend mentions. Generic-pipeline integration (schema column, scorer weight, backfill) deferred — current facet-only ships the data without disrupting existing scores.
 - [ ] **W4-8** Price anchor signal — explicit $ amounts mentioned → monetization validation
 - [ ] **W4-9** Trending detection improvement — weekly post-count delta per cluster, not just boolean flag
 - [ ] **W4-10** Cluster quality score — single-post clusters are noise; penalize until 3+ posts agree
