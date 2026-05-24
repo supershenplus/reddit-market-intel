@@ -227,6 +227,34 @@ LIENCLEAR_PHASE_LABELS = {
 # time hacking around it, and they would pay to stop hacking. Extracted as
 # a facet only (not summed into the relevance score) so the data surfaces
 # without perturbing existing scoring behavior — weight tunable later.
+# Urgency markers — "this is bleeding NOW" vs "I'd like this someday".
+# High-urgency posts disproportionately convert to paying customers.
+LIENCLEAR_URGENCY_PATTERNS = [
+    r"\b(?:right now|right this minute|ASAP|today|tomorrow)\b",
+    r"\b(?:blocking|blocked|holding up|stuck on|killing)\b",
+    r"\b(?:losing|lost|leaking|hemorrhaging) (?:money|cash|revenue|sleep|deals?)\b",
+    r"\b(?:can't|cannot|won't|wouldn't) (?:pay|get paid|invoice|bill|collect)\b",
+    r"\b(?:past due|overdue|late payment|behind on)\b",
+    r"\b(?:emergency|crisis|disaster|nightmare)\b",
+    r"\bdeadline\b",
+    r"\b(?:GC|client|owner) (?:won't|isn't|refuses to) (?:pay|approve|sign|release)\b",
+    r"\bcash flow\b",
+    r"\b(?:30|60|90) days? (?:late|overdue|out|past)\b",
+    r"\bDSO\b",  # days sales outstanding — pure billing-pain jargon
+]
+
+# Frequency markers — recurring pain has bigger TAM than one-off
+# annoyance. "Every month" beats "this one time" by 12x.
+LIENCLEAR_FREQUENCY_PATTERNS = [
+    r"\bevery (?:day|week|month|project|job|pay app|invoice|sub|trade)\b",
+    r"\b(?:daily|weekly|monthly|quarterly)\b",
+    r"\b(?:constantly|continually|always|all the time)\b",
+    r"\b(?:over and over|again and again|each time|every time)\b",
+    r"\beach (?:month|project|job|pay (?:period|app)|invoice)\b",
+    r"\b(?:recurring|ongoing|chronic|perennial)\b",
+    r"\bmultiple (?:times|projects|jobs) (?:per|a) (?:day|week|month)\b",
+]
+
 LIENCLEAR_DIY_PATTERNS = [
     # Spreadsheet / Excel / Word / Google Sheets workarounds
     r"\b(?:Excel|spreadsheet) (?:template|hack|workflow|workaround|file|sheet)\b",

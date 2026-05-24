@@ -215,6 +215,10 @@ class ReportGenerator:
                     facets.append("Competitors: " + ", ".join(lc["competitor_mentions"]))
                 if lc.get("diy_evidence"):
                     facets.append("DIY: " + ", ".join(lc["diy_evidence"]))
+                if lc.get("urgency"):
+                    facets.append("Urgency: " + ", ".join(lc["urgency"]))
+                if lc.get("frequency"):
+                    facets.append("Frequency: " + ", ".join(lc["frequency"]))
                 if facets:
                     lines.append(f"   - {' | '.join(facets)}")
                 lines.append(f"   - URL: {row['url'] or 'N/A'}")
@@ -239,8 +243,12 @@ class ReportGenerator:
         dollars: Counter = Counter()
         competitors: Counter = Counter()
         diy: Counter = Counter()
+        urgency: Counter = Counter()
+        frequency: Counter = Counter()
         domain_hits = 0
         diy_hit_posts = 0
+        urgency_hit_posts = 0
+        frequency_hit_posts = 0
         total = 0
         for row in cur.fetchall():
             total += 1
@@ -270,6 +278,16 @@ class ReportGenerator:
                 diy[d] += 1
             if post_diy:
                 diy_hit_posts += 1
+            post_urgency = lc.get("urgency") or []
+            for u in post_urgency:
+                urgency[u] += 1
+            if post_urgency:
+                urgency_hit_posts += 1
+            post_frequency = lc.get("frequency") or []
+            for f in post_frequency:
+                frequency[f] += 1
+            if post_frequency:
+                frequency_hit_posts += 1
             if lc.get("domain_hit"):
                 domain_hits += 1
         avg_relevance = sum(relevances) / len(relevances) if relevances else 0.0
@@ -278,11 +296,15 @@ class ReportGenerator:
             "post_count": total,
             "domain_hit_rate": (domain_hits / total) if total else 0.0,
             "diy_evidence_rate": (diy_hit_posts / total) if total else 0.0,
+            "urgency_rate": (urgency_hit_posts / total) if total else 0.0,
+            "frequency_rate": (frequency_hit_posts / total) if total else 0.0,
             "states": states.most_common(5),
             "roles": roles.most_common(5),
             "dollar_anchors": dollars.most_common(5),
             "competitors": competitors.most_common(5),
             "diy_evidence": diy.most_common(5),
+            "urgency": urgency.most_common(5),
+            "frequency": frequency.most_common(5),
         }
 
     def _render_lienclear_facets(self, lc: dict) -> list[str]:
@@ -297,9 +319,17 @@ class ReportGenerator:
             lines.append("**Competitor mentions**: " + ", ".join(f"{c} ({n})" for c, n in lc["competitors"]))
         if lc.get("diy_evidence"):
             lines.append("**DIY workarounds**: " + ", ".join(f"{d} ({n})" for d, n in lc["diy_evidence"]))
+        if lc.get("urgency"):
+            lines.append("**Urgency markers**: " + ", ".join(f"{u} ({n})" for u, n in lc["urgency"]))
+        if lc.get("frequency"):
+            lines.append("**Frequency markers**: " + ", ".join(f"{f} ({n})" for f, n in lc["frequency"]))
         lines.append(f"**Domain-hit rate**: {lc.get('domain_hit_rate', 0):.0%}")
         if lc.get("diy_evidence_rate", 0) > 0:
             lines.append(f"**DIY-evidence rate**: {lc.get('diy_evidence_rate', 0):.0%}")
+        if lc.get("urgency_rate", 0) > 0:
+            lines.append(f"**Urgency rate**: {lc.get('urgency_rate', 0):.0%}")
+        if lc.get("frequency_rate", 0) > 0:
+            lines.append(f"**Frequency rate**: {lc.get('frequency_rate', 0):.0%}")
         return lines
 
     def _render_competitor_gap_section(self) -> list[str]:

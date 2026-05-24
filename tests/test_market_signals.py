@@ -269,6 +269,56 @@ class TestLienclearRelevance:
         )
         assert r["diy_evidence"] == []
 
+    def test_urgency_blocking_money(self):
+        r = compute_lienclear_relevance(
+            "GC won't pay, blocking me from making payroll",
+            "30 days overdue, cash flow getting tight",
+            "Plumbing",
+        )
+        assert r["urgency"], "expected urgency facets to capture this post"
+        joined = " ".join(r["urgency"]).lower()
+        assert "blocking" in joined or "won't pay" in joined or "cash flow" in joined
+
+    def test_urgency_dso_jargon(self):
+        r = compute_lienclear_relevance(
+            "Our DSO is creeping past 60 days late on AIA pay apps",
+            "", "Construction",
+        )
+        assert any("DSO" in u for u in r["urgency"])
+
+    def test_urgency_empty_when_chill(self):
+        r = compute_lienclear_relevance(
+            "Curious about lien waiver best practices someday", "", "Construction",
+        )
+        assert r["urgency"] == []
+
+    def test_frequency_recurring_pain(self):
+        r = compute_lienclear_relevance(
+            "Every month we redo the lien waiver dance for each project",
+            "Constantly hunting down signed waivers",
+            "Construction",
+        )
+        assert r["frequency"], "expected recurring-pain frequency markers"
+        joined = " ".join(r["frequency"]).lower()
+        assert "every month" in joined or "constantly" in joined
+
+    def test_frequency_empty_when_one_off(self):
+        r = compute_lienclear_relevance(
+            "One-time question about a specific lien waiver form", "", "Construction",
+        )
+        assert r["frequency"] == []
+
+    def test_urgency_and_frequency_independent_of_score(self):
+        # Both facets are diagnostic-only — adding them should not change score.
+        r_with = compute_lienclear_relevance(
+            "Lien waiver template", "every month, GC won't pay, blocking us",
+            "Construction",
+        )
+        r_without = compute_lienclear_relevance(
+            "Lien waiver template", "", "Construction",
+        )
+        assert r_with["score"] == r_without["score"]
+
     def test_diy_evidence_does_not_perturb_score(self):
         # DIY hits are a diagnostic facet, not a scoring component. A post
         # with DIY signal should score the same as one without (modulo the

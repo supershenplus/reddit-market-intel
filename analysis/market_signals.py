@@ -20,6 +20,8 @@ from config import (
     LIENCLEAR_ROLE_MULTIPLIERS,
     LIENCLEAR_PHASE_PATTERNS,
     LIENCLEAR_DIY_PATTERNS,
+    LIENCLEAR_URGENCY_PATTERNS,
+    LIENCLEAR_FREQUENCY_PATTERNS,
 )
 
 _MONO_HIGH = [re.compile(p, re.IGNORECASE) for p in MONETIZATION_HIGH_KEYWORDS]
@@ -45,6 +47,8 @@ _LC_PHASES = {
     for phase, patterns in LIENCLEAR_PHASE_PATTERNS.items()
 }
 _LC_DIY = [re.compile(p, re.IGNORECASE) for p in LIENCLEAR_DIY_PATTERNS]
+_LC_URGENCY = [re.compile(p, re.IGNORECASE) for p in LIENCLEAR_URGENCY_PATTERNS]
+_LC_FREQUENCY = [re.compile(p, re.IGNORECASE) for p in LIENCLEAR_FREQUENCY_PATTERNS]
 
 # Role priority order — most specific buyer role wins. Kept as an explicit list
 # (not derived from dict key order) because match priority differs from config
@@ -139,6 +143,8 @@ def compute_lienclear_relevance(title: str, body: str, subreddit: str) -> dict:
         "competitor_mentions": [],
         "domain_hit": False,
         "diy_evidence": [],
+        "urgency": [],
+        "frequency": [],
     }
     if not text:
         return out
@@ -193,6 +199,16 @@ def compute_lienclear_relevance(title: str, body: str, subreddit: str) -> dict:
         m.group(0) for p in _LC_DIY for m in p.finditer(text)
     })
     out["diy_evidence"] = diy_hits
+
+    # Urgency / frequency facets (W4-2, W4-6) — same facet-only treatment.
+    # Urgency = "bleeding NOW", frequency = "recurring pain". Both inform
+    # WTP without changing the existing relevance score.
+    out["urgency"] = sorted({
+        m.group(0) for p in _LC_URGENCY for m in p.finditer(text)
+    })
+    out["frequency"] = sorted({
+        m.group(0) for p in _LC_FREQUENCY for m in p.finditer(text)
+    })
 
     raw_score = sum(w[k] * v for k, v in components.items())
 
