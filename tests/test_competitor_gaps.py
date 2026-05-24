@@ -34,7 +34,8 @@ def _insert_post(db, reddit_id, subreddit="Construction", title="Test", body="",
     return db.get_post_by_reddit_id(reddit_id)
 
 
-def _insert_pp(db, post_id, competitors=None, lc_score=0.5, opp_score=0.5):
+def _insert_pp(db, post_id, competitors=None, lc_score=0.5, opp_score=0.5,
+               urgency=None, frequency=None):
     lc = {
         "score": lc_score,
         "states": [],
@@ -42,6 +43,8 @@ def _insert_pp(db, post_id, competitors=None, lc_score=0.5, opp_score=0.5):
         "role": None,
         "competitor_mentions": competitors or [],
         "domain_hit": True,
+        "urgency": urgency or [],
+        "frequency": frequency or [],
     }
     db.insert_pain_point({
         "post_id": post_id,
@@ -179,6 +182,40 @@ def cli_db(tmp_path, request):
     request.addfinalizer(lambda: setattr(main, "Database", original))
     yield seed
     seed.close()
+
+
+def test_heat_signals_surface_urgency_and_frequency(db):
+    p = _insert_post(db, "t3_hot", title="Procore is killing our cash flow")
+    _insert_pp(db, p["id"], competitors=["Procore"],
+               urgency=["cash flow", "killing"], frequency=["every month"])
+    out = CompetitorGapReport(db).generate()
+    assert "Urgency: cash flow, killing" in out
+    assert "Frequency: every month" in out
+
+
+def test_heat_signals_fall_back_to_live_scan(db):
+    # PP was stored without urgency/frequency facets (older analyze run).
+    # Live re-scan on title+body should still surface them.
+    p = _insert_post(db, "t3_legacy",
+                     title="Procore problems blocking us this week",
+                     body="every project the same nightmare")
+    _insert_pp(db, p["id"], competitors=["Procore"], urgency=[], frequency=[])
+    out = CompetitorGapReport(db).generate()
+    # The live scan should have caught "blocking" + "nightmare" + "every project"
+    assert "Urgency:" in out
+    assert "Frequency:" in out
+
+
+def test_heat_signals_silent_when_post_is_chill(db):
+    p = _insert_post(db, "t3_chill",
+                     title="What's Procore actually like in practice?",
+                     body="Curious about features")
+    _insert_pp(db, p["id"], competitors=["Procore"], urgency=[], frequency=[])
+    out = CompetitorGapReport(db).generate()
+    # Chill post should not have a heat-signal line under it
+    section = out.split("## Procore")[1].split("---")[0]
+    assert "Urgency:" not in section
+    assert "Frequency:" not in section
 
 
 def test_cli_writes_competitor_gap_report(cli_db, tmp_path):

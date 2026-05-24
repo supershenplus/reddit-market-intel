@@ -16,6 +16,7 @@ from datetime import datetime
 
 from storage.db import Database
 from config import LIENCLEAR_COMPETITORS
+from analysis.market_signals import compute_lienclear_relevance
 
 
 class CompetitorGapReport:
@@ -62,6 +63,9 @@ class CompetitorGapReport:
                         f"{i}. [r/{p['subreddit']}] \"{title}\" "
                         f"(↑ {p['score'] or 0}) — relevance {p['relevance']:.2f}"
                     )
+                    heat_signals = self._heat_signals_for_post(p)
+                    if heat_signals:
+                        lines.append(f"   - {heat_signals}")
                     lines.append(f"   URL: {p['url'] or 'N/A'}")
                 lines.append("")
 
@@ -111,7 +115,7 @@ class CompetitorGapReport:
     def _top_posts_for_competitor(self, competitor: str) -> list[dict]:
         """Posts whose pain_point matched_patterns mentions this competitor."""
         cur = self.db.conn.execute(
-            """SELECT p.title, p.subreddit, p.url, p.score, p.reddit_id,
+            """SELECT p.title, p.body, p.subreddit, p.url, p.score, p.reddit_id,
                       pp.matched_patterns, pp.opportunity_score
                FROM pain_points pp
                JOIN posts p ON pp.post_id = p.id
@@ -127,18 +131,49 @@ class CompetitorGapReport:
                 parsed = json.loads(row["matched_patterns"])
                 lc = parsed.get("lienclear", {})
                 relevance = float(lc.get("score") or 0)
+                urgency = lc.get("urgency") or []
+                frequency = lc.get("frequency") or []
             except (TypeError, ValueError, json.JSONDecodeError, AttributeError):
                 relevance = 0.0
+                urgency = []
+                frequency = []
             hits.append({
                 "title": row["title"],
+                "body": row["body"],
                 "subreddit": row["subreddit"],
                 "url": row["url"],
                 "score": row["score"],
                 "relevance": relevance,
+                "urgency": urgency,
+                "frequency": frequency,
             })
             if len(hits) >= self.posts_per_competitor:
                 break
         return hits
+
+    def _heat_signals_for_post(self, post: dict) -> str:
+        """Compact one-liner of urgency + frequency markers when present.
+
+        Falls back to a live `compute_lienclear_relevance` scan on the
+        title+body if the stored facets are absent (e.g. pain_point was
+        classified before urgency/frequency landed — handles the gap
+        gracefully without requiring --force re-analyze).
+        """
+        urgency = post.get("urgency") or []
+        frequency = post.get("frequency") or []
+        if not urgency and not frequency:
+            lc_live = compute_lienclear_relevance(
+                post.get("title") or "", post.get("body") or "",
+                post.get("subreddit") or "",
+            )
+            urgency = lc_live.get("urgency") or []
+            frequency = lc_live.get("frequency") or []
+        parts = []
+        if urgency:
+            parts.append("Urgency: " + ", ".join(urgency[:5]))
+        if frequency:
+            parts.append("Frequency: " + ", ".join(frequency[:5]))
+        return " | ".join(parts)
 
     def _negative_quotes_for_competitor(self, competitor: str) -> list[dict]:
         """Negative comments mentioning the competitor by word-boundary match."""
