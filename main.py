@@ -12,7 +12,10 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from config import SEED_SUBREDDITS, DEFAULT_LIMIT, DEFAULT_SORT
+from config import (
+    SEED_SUBREDDITS, DEFAULT_LIMIT, DEFAULT_SORT,
+    LLM_BATCH_SIZE, LLM_MAX_POSTS_PER_RUN, LLM_RAG_PREFILTER,
+)
 from storage.db import Database
 from scraper.praw_scraper import get_scraper
 from scraper.comments import classify_comment
@@ -523,6 +526,143 @@ def digest(top, output, n_niches):
     Path(output).write_text(md, encoding="utf-8")
     console.print(f"[bold green]Digest exported to {output}[/bold green]")
     console.print(f"[dim]{written} niches written. Open: {output}[/dim]")
+    db.close()
+
+
+def _default_prefilter() -> str:
+    """Config LLM_RAG_PREFILTER (bool) maps to a CLI default: True->strict,
+    False->off. 'sampled' must be requested explicitly via --prefilter."""
+    return "strict" if LLM_RAG_PREFILTER else "off"
+
+
+@cli.command("llm-export")
+@click.option(
+    "--batch-size", default=LLM_BATCH_SIZE, show_default=True, type=int,
+    help="Posts per batch file. Sized for ~50K input tokens.",
+)
+@click.option(
+    "--max-posts", default=LLM_MAX_POSTS_PER_RUN, show_default=True, type=int,
+    help="Hard cap on total posts selected per run.",
+)
+@click.option(
+    "--prefilter", default=None,
+    type=click.Choice(["strict", "sampled", "off"]),
+    help="RAG pre-filter mode. Default: strict if LLM_RAG_PREFILTER else off.",
+)
+@click.option(
+    "--re-extract", is_flag=True, default=False,
+    help="Re-extract posts that already have a current-version facet.",
+)
+@click.option(
+    "--output-root", default=None,
+    help="Override the batch output root (default: data/llm_batches/).",
+)
+def llm_export(batch_size, max_posts, prefilter, re_extract, output_root):
+    """Phase 3 — export posts to LLM batch markdown files."""
+    from analysis.llm_extractor import select_posts, export_batches
+
+    db = Database()
+    prefilter = prefilter or _default_prefilter()
+    console.print(
+        f"[bold]Selecting posts (prefilter={prefilter}, max={max_posts}, "
+        f"re_extract={re_extract})...[/bold]"
+    )
+    posts = select_posts(
+        db, prefilter=prefilter, max_posts=max_posts, re_extract=re_extract,
+    )
+    if not posts:
+        console.print(
+            "[yellow]No posts to extract. All current at prompt_version, "
+            "or no posts match the pre-filter.[/yellow]"
+        )
+        db.close()
+        return
+
+    output_dir = export_batches(
+        posts, batch_size=batch_size,
+        output_root=Path(output_root) if output_root else None,
+    )
+    n_batches = (len(posts) + batch_size - 1) // batch_size
+    console.print(
+        f"[bold green]Exported {len(posts)} posts in {n_batches} batches.[/bold green]"
+    )
+    console.print(f"[dim]Output: {output_dir}[/dim]")
+    db.close()
+
+
+@cli.command("llm-import")
+@click.argument("batch_dir", type=click.Path(exists=True, file_okay=False, dir_okay=True))
+def llm_import(batch_dir):
+    """Phase 3 — import facets JSON from a previously-exported batch directory."""
+    from analysis.llm_extractor import import_facets
+
+    db = Database()
+    try:
+        result = import_facets(Path(batch_dir), db)
+    except (ValueError, FileNotFoundError) as e:
+        console.print(f"[red]Import failed: {e}[/red]")
+        db.close()
+        raise click.exceptions.Exit(code=1)
+
+    console.print(f"[bold green]Imported {result['imported']} facets.[/bold green]")
+    for w in result["warnings"]:
+        console.print(f"[yellow]warning: {w}[/yellow]")
+    for e in result["errors"]:
+        console.print(f"[red]error: {e}[/red]")
+    db.close()
+
+
+@cli.command("llm-extract")
+@click.option(
+    "--batch-size", default=LLM_BATCH_SIZE, show_default=True, type=int,
+)
+@click.option(
+    "--max-posts", default=LLM_MAX_POSTS_PER_RUN, show_default=True, type=int,
+)
+@click.option(
+    "--prefilter", default=None,
+    type=click.Choice(["strict", "sampled", "off"]),
+)
+@click.option("--re-extract", is_flag=True, default=False)
+def llm_extract(batch_size, max_posts, prefilter, re_extract):
+    """Phase 3 — top-level driver: export batches + print operator handoff.
+
+    Run this, then open a Claude Code session and follow the printed
+    instructions. After the session writes facets, run `llm-import`."""
+    from analysis.llm_extractor import select_posts, export_batches
+
+    db = Database()
+    prefilter = prefilter or _default_prefilter()
+    console.print(
+        f"[bold]Selecting posts (prefilter={prefilter}, max={max_posts}, "
+        f"re_extract={re_extract})...[/bold]"
+    )
+    posts = select_posts(
+        db, prefilter=prefilter, max_posts=max_posts, re_extract=re_extract,
+    )
+    if not posts:
+        console.print(
+            "[yellow]No posts to extract. All current at prompt_version, "
+            "or no posts match the pre-filter.[/yellow]"
+        )
+        db.close()
+        return
+
+    output_dir = export_batches(posts, batch_size=batch_size)
+    n_batches = (len(posts) + batch_size - 1) // batch_size
+    console.print(
+        f"[bold green]Exported {len(posts)} posts in {n_batches} batches.[/bold green]\n"
+    )
+
+    # Operator handoff — copy/pasteable next steps
+    console.print("[bold]Next steps:[/bold]")
+    console.print(
+        f"  1. Open a Claude Code session in this project.\n"
+        f"  2. Tell it: [cyan]Process the batches in {output_dir} per the embedded "
+        f"schema in each batch_NNN.md. Write the facets array to "
+        f"batch_NNN_facets.json next to each batch file.[/cyan]\n"
+        f"  3. When done, run: [cyan]python main.py llm-import {output_dir}[/cyan]\n"
+    )
     db.close()
 
 

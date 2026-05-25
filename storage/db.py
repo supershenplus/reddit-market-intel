@@ -18,6 +18,37 @@ MIGRATIONS = [
         ALTER TABLE clusters ADD COLUMN niche_id INTEGER;
         CREATE INDEX IF NOT EXISTS idx_cluster_niche ON clusters(niche_id);
     """),
+    ("0002_create_pain_facets", """
+        CREATE TABLE IF NOT EXISTS pain_facets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            prompt_version TEXT NOT NULL,
+            is_pain_point INTEGER NOT NULL,
+            pain_summary TEXT,
+            domain TEXT,
+            current_solution TEXT,
+            integrations_mentioned TEXT,
+            dollar_anchors TEXT,
+            max_dollar_anchor REAL,
+            willingness_to_pay TEXT,
+            urgency TEXT,
+            buyer_role TEXT,
+            market_size_signal TEXT,
+            confidence REAL,
+            raw_response TEXT,
+            model TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            mode TEXT,
+            prefilter_source TEXT,
+            extracted_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(post_id, prompt_version),
+            FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_facets_post ON pain_facets(post_id);
+        CREATE INDEX IF NOT EXISTS idx_facets_domain ON pain_facets(domain);
+        CREATE INDEX IF NOT EXISTS idx_facets_wtp ON pain_facets(willingness_to_pay);
+    """),
 ]
 
 
@@ -278,6 +309,98 @@ class Database:
     def get_clusters_for_niche(self, niche_id: int) -> list[dict]:
         cur = self.conn.execute(
             "SELECT * FROM clusters WHERE niche_id = ?", (niche_id,)
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    # --- Pain Facets (Phase 3 LLM extraction) ---
+
+    def get_posts_without_facets(self, prompt_version: str) -> list[dict]:
+        """Posts with no pain_facets row at the given prompt_version. Resume
+        target for llm-extract — re-processes only stale rows. A version bump
+        naturally widens this set to the full corpus."""
+        cur = self.conn.execute(
+            """SELECT p.* FROM posts p
+               LEFT JOIN pain_facets pf
+                 ON pf.post_id = p.id AND pf.prompt_version = ?
+               WHERE pf.id IS NULL""",
+            (prompt_version,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def upsert_pain_facet(self, facet: dict):
+        """UPSERT keyed on (post_id, prompt_version). Idempotent under
+        re-import; the operator can replay a batch with no duplicate rows."""
+        self.conn.execute(
+            """INSERT INTO pain_facets (
+                post_id, prompt_version, is_pain_point, pain_summary, domain,
+                current_solution, integrations_mentioned, dollar_anchors,
+                max_dollar_anchor, willingness_to_pay, urgency, buyer_role,
+                market_size_signal, confidence, raw_response, model,
+                input_tokens, output_tokens, mode, prefilter_source
+            ) VALUES (
+                :post_id, :prompt_version, :is_pain_point, :pain_summary, :domain,
+                :current_solution, :integrations_mentioned, :dollar_anchors,
+                :max_dollar_anchor, :willingness_to_pay, :urgency, :buyer_role,
+                :market_size_signal, :confidence, :raw_response, :model,
+                :input_tokens, :output_tokens, :mode, :prefilter_source
+            )
+            ON CONFLICT(post_id, prompt_version) DO UPDATE SET
+                is_pain_point = excluded.is_pain_point,
+                pain_summary = excluded.pain_summary,
+                domain = excluded.domain,
+                current_solution = excluded.current_solution,
+                integrations_mentioned = excluded.integrations_mentioned,
+                dollar_anchors = excluded.dollar_anchors,
+                max_dollar_anchor = excluded.max_dollar_anchor,
+                willingness_to_pay = excluded.willingness_to_pay,
+                urgency = excluded.urgency,
+                buyer_role = excluded.buyer_role,
+                market_size_signal = excluded.market_size_signal,
+                confidence = excluded.confidence,
+                raw_response = excluded.raw_response,
+                model = excluded.model,
+                input_tokens = excluded.input_tokens,
+                output_tokens = excluded.output_tokens,
+                mode = excluded.mode,
+                prefilter_source = excluded.prefilter_source,
+                extracted_at = datetime('now')""",
+            facet,
+        )
+        self.conn.commit()
+
+    def get_facets_for_post(self, post_id: int) -> list[dict]:
+        """All facet rows for a post across prompt_versions (newest first)."""
+        cur = self.conn.execute(
+            "SELECT * FROM pain_facets WHERE post_id = ? ORDER BY extracted_at DESC",
+            (post_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_current_facet(self, post_id: int, prompt_version: str):
+        cur = self.conn.execute(
+            "SELECT * FROM pain_facets WHERE post_id = ? AND prompt_version = ?",
+            (post_id, prompt_version),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_pain_points_for_cluster_unvetoed(
+        self, cluster_id: int, prompt_version: str,
+    ) -> list[dict]:
+        """Cluster members filtered by the LLM veto: pain_points with a
+        current-version pain_facet of is_pain_point=0 are excluded.
+        Pain_points with no facet at all are INCLUDED (backwards compatibility
+        with pre-Phase-3 state — facets are additive, not required)."""
+        cur = self.conn.execute(
+            """SELECT pp.*, p.title, p.body, p.subreddit, p.url,
+                      p.score AS reddit_score, p.num_comments, p.created_utc
+               FROM pain_points pp
+               JOIN posts p ON pp.post_id = p.id
+               LEFT JOIN pain_facets pf
+                 ON pf.post_id = p.id AND pf.prompt_version = ?
+               WHERE pp.cluster_id = ?
+                 AND (pf.is_pain_point IS NULL OR pf.is_pain_point = 1)""",
+            (prompt_version, cluster_id),
         )
         return [dict(r) for r in cur.fetchall()]
 

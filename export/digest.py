@@ -10,6 +10,7 @@ from datetime import date
 import re
 import time
 
+from config import LLM_PROMPT_VERSION
 from storage.db import Database
 
 
@@ -78,7 +79,13 @@ class DigestWriter:
         clusters = self.db.get_clusters_for_niche(niche["id"])
         all_pps: list[dict] = []
         for c in clusters:
-            all_pps.extend(self.db.get_pain_points_for_cluster(c["id"]))
+            # Phase 3 veto: skip pain_points where the current-version LLM
+            # facet says is_pain_point=0. Pre-Phase-3 rows (no facet) survive.
+            all_pps.extend(
+                self.db.get_pain_points_for_cluster_unvetoed(
+                    c["id"], LLM_PROMPT_VERSION,
+                )
+            )
         if not all_pps:
             return [f"## {rank}. {niche['label']} — score {niche['rank_score']:.2f} (no member posts)"]
 
