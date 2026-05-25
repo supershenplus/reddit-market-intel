@@ -340,6 +340,79 @@ LIENCLEAR_ROLE_MULTIPLIERS = {
     "homeowner": 0.25,
 }
 
+# ---------------------------------------------------------------------------
+# Phase 3 — LLM extraction budget + mode config
+# Guardrails apply to both `analyze --llm-extract --mode api` (Anthropic SDK)
+# and `--mode batch` (Claude Code session workflow — exports posts to markdown
+# batches, operator processes them in a Max-sub session, imports JSON back).
+# Circuit breakers fire before extraction fans out; exceeding any limit
+# aborts the run with a clear message. Tune per session.
+# ---------------------------------------------------------------------------
+
+# Default extraction mode. "batch" = export-to-file + process in a Claude
+# Code session (zero marginal $, uses your Max quota). "api" = direct
+# Anthropic SDK calls (paid, automated). Override via --mode on the CLI.
+LLM_DEFAULT_MODE = "batch"
+
+# Max posts processed in a single `analyze --llm-extract` invocation. Hard
+# circuit breaker — prevents a runaway re-extract after a prompt-version
+# bump from blasting through the whole corpus unintentionally. Raise via
+# --max-posts when you genuinely want a backfill.
+LLM_MAX_POSTS_PER_RUN = 500
+
+# Soft dollar ceiling for `--mode api` runs only (batch mode is $0 marginal).
+# Computed against per-call usage from the Anthropic response. Hitting it
+# aborts mid-run; bypass via --budget USD.
+LLM_MAX_USD_PER_RUN = 5.00
+
+# Batch-mode export: posts per batch file. Sized for ~50K input tokens so a
+# single batch fits comfortably in a Claude Code session turn alongside
+# instructions, the schema, and headroom for retries.
+LLM_BATCH_SIZE = 50
+
+# Where batch files live. Gitignored — see .gitignore data/.
+LLM_BATCH_DIR = DATA_DIR / "llm_batches"
+
+# Rough token estimates for the API-mode pre-flight $ check. Real usage
+# comes from the API response; these are only used to refuse a run we
+# already know will blow the budget.
+LLM_ESTIMATED_INPUT_TOKENS_PER_POST = 800
+LLM_ESTIMATED_OUTPUT_TOKENS_PER_POST = 300
+
+# Approximate per-million-token rates ($USD). VERIFY against the live
+# Anthropic pricing page (anthropic.com/pricing) before any production
+# API-mode run — these are budget-planning ballparks, not billing source
+# of truth. Conservative side; refresh when 4.X rates are confirmed.
+LLM_PRICING = {
+    "claude-haiku-4-5": {
+        "input_per_m": 1.00, "output_per_m": 5.00, "cache_read_per_m": 0.10,
+    },
+    "claude-sonnet-4-6": {
+        "input_per_m": 3.00, "output_per_m": 15.00, "cache_read_per_m": 0.30,
+    },
+    "claude-opus-4-7": {
+        "input_per_m": 15.00, "output_per_m": 75.00, "cache_read_per_m": 1.50,
+    },
+}
+
+# Default model for --mode api. Haiku 4.5 = cheapest path that still
+# produces useful structured facets. Sonnet for when extraction quality
+# matters more than throughput; Opus rarely needed for structured tasks.
+LLM_DEFAULT_MODEL = "claude-haiku-4-5"
+
+# RAG pre-filter: when True, only posts whose RAG-classifier similarity
+# crosses SIMILARITY_THRESHOLD get LLM-extracted. Cuts cost ~3-4x in api
+# mode at the price of inheriting RAG's recall ceiling. Recommended on
+# for Haiku (cost-dominant) + batch mode (your session minutes are
+# finite); off for Sonnet+ when accuracy matters more.
+LLM_RAG_PREFILTER = True
+
+# Extraction prompt version. Increment when the prompt or output schema
+# changes; pain_facets rows store the version they were extracted under
+# so re-extraction targets only stale rows. Without this guard a single
+# prompt tweak triggers a full-corpus re-run at full cost.
+LLM_PROMPT_VERSION = "v0.1"
+
 # Profile overlays — selected via `--profile` CLI flag on export
 PROFILES = {
     "lienclear": {
