@@ -246,7 +246,10 @@ def analyze(force):
         db.update_pain_point_score(pp["id"], new_score)
 
     clusters = db.get_all_clusters()
-    console.print(f"[bold green]Done! {matched} pain points in {len(clusters)} clusters.[/bold green]")
+    console.print(
+        f"[bold green]Done! Classified {matched} new pain points this run. "
+        f"DB now: {len(all_pp)} pain points in {len(clusters)} clusters.[/bold green]"
+    )
     db.close()
 
 
