@@ -37,6 +37,9 @@ SEEDS: dict[str, list[str]] = {
         "Need a way to manage T&M billing without spreadsheets",
         "How do you all handle retainage tracking across jobs?",
         "What software handles subcontractor payment workflow end to end?",
+        "What software do you use to collect rent and track late payments?",
+        "Looking for a small-landlord property management app that handles maintenance requests",
+        "Any Buildium or AppFolio alternative for landlords with under 20 units?",
     ],
     "would_pay": [
         "I would gladly pay for a solution to this problem",
@@ -47,6 +50,7 @@ SEEDS: dict[str, list[str]] = {
         "I would pay 99 a month for a lien waiver and pay app tool",
         "Honestly $150 a month would be worth it just to stop using Excel for pay apps",
         "I'd pay real money for something that just handles GC payment workflow end to end",
+        "I would pay $30 a month easily for a tool that handles rent collection and tenant communication",
     ],
     "frustrated": [
         "I'm so frustrated with the existing tools, they're all terrible",
@@ -66,6 +70,8 @@ SEEDS: dict[str, list[str]] = {
         "Net 60 from the GC is killing my cash flow this quarter",
         "Spent another weekend chasing down payment on a closed job",
         "Lost a $40k claim because I missed the preliminary notice deadline",
+        "Buildium pricing is absurd for a small landlord with a handful of units",
+        "Spent another month chasing rent from a tenant who keeps ghosting",
     ],
     "feature_request": [
         "I wish there was a simple way to do this",
