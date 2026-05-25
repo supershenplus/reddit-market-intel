@@ -31,6 +31,12 @@ SEEDS: dict[str, list[str]] = {
         "What's the best way to handle this in QBO?",
         "Anyone know a clean way to track this in QuickBooks Online?",
         "How do you handle multi-entity bookkeeping in QBO?",
+        "What do you guys use to track time across multiple jobsites?",
+        "Looking for a simple way to send progress invoices to my GCs",
+        "Any tool that helps with change order tracking on commercial jobs?",
+        "Need a way to manage T&M billing without spreadsheets",
+        "How do you all handle retainage tracking across jobs?",
+        "What software handles subcontractor payment workflow end to end?",
     ],
     "would_pay": [
         "I would gladly pay for a solution to this problem",
@@ -40,6 +46,7 @@ SEEDS: dict[str, list[str]] = {
         "I'd pay $50/month easily if it solved this",
         "I would pay 99 a month for a lien waiver and pay app tool",
         "Honestly $150 a month would be worth it just to stop using Excel for pay apps",
+        "I'd pay real money for something that just handles GC payment workflow end to end",
     ],
     "frustrated": [
         "I'm so frustrated with the existing tools, they're all terrible",
@@ -56,6 +63,9 @@ SEEDS: dict[str, list[str]] = {
         "Almost signed an unconditional final waiver before getting my check, would have given up lien rights",
         "QuickBooks has no clean way to handle this, every workaround breaks something else",
         "Spent hours trying to figure out how to record this properly in QBO and there's no good answer",
+        "Net 60 from the GC is killing my cash flow this quarter",
+        "Spent another weekend chasing down payment on a closed job",
+        "Lost a $40k claim because I missed the preliminary notice deadline",
     ],
     "feature_request": [
         "I wish there was a simple way to do this",
