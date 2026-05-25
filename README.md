@@ -1,224 +1,263 @@
-# Reddit Market Intelligence Pipeline
+# Reddit Market Intelligence
 
-A modular Python pipeline that scrapes niche subreddits for user complaints and requests, identifies market gaps for SaaS/apps/tools, clusters similar pain points into opportunities, and scores them by potential. No LLM API key required — uses regex/heuristic analysis locally, with structured exports designed for Claude Code analysis sessions.
+A personal market-gap discovery engine. Scrapes ~100 subreddits across 12 verticals, extracts user pain points via RAG + LLM, clusters them, and emits a ranked weekly markdown digest skim-able in one sitting. Designed for an audience of one — solo operator hunting for SaaS opportunities.
 
-## How It Works
+## Pipeline
 
 ```
-Scrape → Classify → Validate → Score → Cluster → Export
+scrape-all → analyze → llm-extract → llm-import → digest
+   (PRAW)     (RAG)      (markdown    (validate +     (top niches,
+              + regex)    batches)     UPSERT)         LLM-vetoed)
 ```
 
-1. **Scrape** posts and comment threads from target subreddits
-2. **Classify** posts using 25 regex patterns across 5 intent categories
-3. **Validate** via comment thread analysis (unanswered questions, "me too" signals, failed competitor mentions)
-4. **Score** opportunities using a weighted composite of upvotes, sentiment, validation, cross-subreddit correlation, and recency
-5. **Cluster** similar pain points using TF-IDF + cosine similarity to deduplicate
-6. **Export** structured markdown reports grouped by market opportunity
+| Stage | What it does | Module |
+|---|---|---|
+| **Scrape** | PRAW + JSON-API fallback; rate-aware multi-sub walking | `scraper/` |
+| **Classify** | RAG (sentence-transformers + ChromaDB) primary, regex fallback | `analysis/classifier.py`, `analysis/rag_classifier.py` |
+| **Cluster** | TF-IDF + cosine-similarity dedup; k-means meta-cluster into niches | `analysis/clustering.py`, `analysis/niches.py` |
+| **LLM extract** | Batch-mode structured facet extraction via Claude Code session | `analysis/llm_extractor.py` |
+| **Digest** | Weekly ranked markdown, LLM facets veto noise pain_points | `export/digest.py` |
 
-## Quick Start
+## Quick start
 
 ```bash
-cd reddit-market-intel
 pip install -r requirements.txt
 
-# Scrape a subreddit (no credentials needed)
+# Scrape one sub (no credentials needed — JSON fallback)
 python main.py scrape --subreddit smallbusiness --limit 50
 
-# Run the full analysis pipeline
+# Or scrape every configured sub with age-based skipping (weekly cadence)
+python main.py scrape-all --max-age-days 7 --limit 100
+
+# Build pain_points + clusters + niches
 python main.py analyze
 
-# Export top opportunities
-python main.py export --top 20 --output report.md
+# Phase 3 — extract structured facets via Claude Code (Max sub)
+python main.py llm-extract --max-posts 100
+#   → open a Claude Code session, follow the printed instructions
+python main.py llm-import data/llm_batches/<UTC-ts>/
+
+# Weekly digest (LLM veto active)
+python main.py digest
 ```
 
 ## Commands
 
 | Command | Description |
-|---------|-------------|
-| `scrape` | Fetch posts + comments from Reddit |
-| `analyze` | Run classifier, validator, scorer, and clustering |
+|---|---|
+| `scrape` | Fetch posts + comments from one sub or category |
+| `scrape-all` | Walk every configured sub, skipping recently-scraped (`--max-age-days N`) |
 | `discover` | Find related subreddits from sidebar/crossposts |
-| `export` | Generate markdown opportunity report |
-| `status` | Show database stats and top clusters |
+| `analyze` | RAG/regex classifier + clustering + opportunity scoring |
+| `llm-extract` | Phase 3 driver — export batches + print operator handoff |
+| `llm-export` | Just write batch files (scriptable primitive) |
+| `llm-import <dir>` | Validate manifest + UPSERT facets into pain_facets |
+| `digest` | Build niches + emit weekly markdown digest (`reports/weekly/<date>.md`) |
+| `export` | Per-cluster opportunity report (legacy; pre-pivot) |
+| `snapshot` / `delta` | Track cluster movement week-over-week |
+| `status` | DB counts and top clusters |
 
-### Scrape
+## Seed subreddits (12-vertical taxonomy)
+
+```
+b2b_saas        smallbusiness, Entrepreneur, SaaS, startups, indiehackers, ...
+vertical_saas   legaltech, lawfirm, Accounting, taxpros, Dentistry, ...
+dev_tools       webdev, devops, programming, ExperiencedDevs, golang, ...
+marketing       marketing, SEO, PPC, EmailMarketing, socialmedia, ...
+freelance       freelance, DigitalNomad, forhire, Upwork, ...
+ecommerce       ecommerce, shopify, FulfillmentByAmazon, EtsySellers, ...
+property        realestate, RealEstateInvesting, Landlord, PropertyManagement, ...
+construction    Construction, Contractor, Electricians, HVAC, Plumbing, ...
+services        AutoDetailing, Salon, lawncare, landscaping, CleaningCompany, ...
+automation      nocode, n8n, zapier, MakeAutomation, RPA, ...
+operations      projectmanagement, OperationsManagement, businessanalysis, ...
+leadership      managers, Leadership, AskManagers, EngineeringManagers, ...
+```
+
+Edit `config.py:SEED_SUBREDDITS` to tune. `scrape-all` dedupes across categories.
+
+## Reddit API access
+
+| Mode | Auth | Rate limit | Setup |
+|---|---|---|---|
+| **JSON API** (fallback) | None | ~60 req/min | Works immediately |
+| **PRAW** (preferred) | OAuth | 600 req/10min | `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` env vars |
+
+Create credentials at https://www.reddit.com/prefs/apps (select "script" type).
+
+## Phase 3 — LLM facet extraction
+
+Two paths, configured via `config.py:LLM_DEFAULT_MODE`:
+
+### Batch mode (default — $0 marginal cost with Claude Max)
 
 ```bash
-# Single subreddit
-python main.py scrape --subreddit Entrepreneur --limit 100 --sort top
-
-# All subreddits in a category
-python main.py scrape --category smb_saas --limit 50
-
-# Skip comment fetching (faster, less validation data)
-python main.py scrape --subreddit SaaS --no-comments
+python main.py llm-extract --max-posts 100 --prefilter strict
 ```
 
-### Analyze
+Writes batches as markdown to `data/llm_batches/<UTC-ts>/batch_NNN.md`. Each batch contains the prompt, JSON schema, schema fingerprint, and ~50 posts.
 
+You then open a Claude Code session and process the batches in-session (Claude reads the batch, infers facets, writes `batch_NNN_facets.json` next to each batch file). Pairs naturally with `/bigmode-max` workflow.
+
+Finally:
 ```bash
-python main.py analyze
+python main.py llm-import data/llm_batches/<UTC-ts>/
 ```
 
-Runs the full pipeline on all unprocessed posts: pattern matching, comment validation, opportunity scoring, and clustering.
+Validates schema fingerprint + per-batch sha256, then UPSERTs into `pain_facets`. Idempotent under replay.
 
-### Discover
+### API mode (Phase 3.5 — not yet implemented)
 
-```bash
-python main.py discover --from smallbusiness --category smb_saas
-```
+Direct Anthropic SDK calls with cost circuit breakers. Budget config is in place (`LLM_MAX_USD_PER_RUN`, `LLM_PRICING`) but the executor lands when unattended weekly runs become useful.
 
-Parses sidebar descriptions and crosspost patterns to find related subreddits automatically.
+### What gets extracted
 
-### Export
+12 structured facets per post (see `analysis/llm_extractor.py:FACET_FIELDS`):
+- `is_pain_point` — LLM's authoritative veto (hides post from digest when false)
+- `pain_summary` — one-sentence summary
+- `domain` — 12-vertical taxonomy alignment
+- `current_solution` — what the author says they currently use
+- `integrations_mentioned`, `dollar_anchors`, `max_dollar_anchor`
+- `willingness_to_pay`: `would_pay | hesitant | no_signal`
+- `urgency`: `blocking | recurring | nice_to_have | none`
+- `buyer_role`, `market_size_signal`, `confidence`
 
-```bash
-python main.py export --top 20 --output report.md --min-score 0.4
-```
+### Pre-filter modes
 
-Generates a structured report grouped by opportunity cluster, including evidence posts, validation signals, and failed competitor mentions. Designed to be fed directly into a Claude Code session for deeper analysis.
+| Mode | Behavior | When |
+|---|---|---|
+| `strict` (default) | RAG-positive posts only | Steady-state weekly |
+| `sampled` | RAG-pos + 10% of RAG-neg | Recall audit |
+| `off` | All candidates | Backfill / version migration |
 
-### Status
+Each row records `prefilter_source` so RAG ↔ LLM agreement is one SQL away.
 
-```bash
-python main.py status
-```
+### Re-extraction safety
 
-Shows post/comment/cluster counts and the top-scoring opportunities.
+`LLM_PROMPT_VERSION` in `config.py` gates re-extraction. Bumping it widens `llm-extract`'s selection to the full corpus (caps at `LLM_MAX_POSTS_PER_RUN`). The `pain_facets.prompt_version` column means stale rows survive alongside fresh ones — Phase 4 reads only the current version.
 
-## Reddit API Access
-
-The pipeline works in two modes:
-
-| Mode | Auth Required | Rate Limit | Setup |
-|------|--------------|------------|-------|
-| **JSON API** (default) | None | ~60 req/min | Works immediately |
-| **PRAW** (primary) | OAuth credentials | 600 req/10min | Set env vars below |
-
-To enable PRAW (higher throughput):
-
-```bash
-export REDDIT_CLIENT_ID="your_client_id"
-export REDDIT_CLIENT_SECRET="your_client_secret"
-```
-
-Create credentials at https://www.reddit.com/prefs/apps — select "script" type.
-
-## Intent Categories
-
-Posts are classified into 5 intent categories, each with different opportunity weight:
-
-| Category | Weight | Example Signal |
-|----------|--------|----------------|
-| `would_pay` | 1.0 | "I'd gladly pay for..." |
-| `unbundle` | 0.7 | "Too expensive for just..." |
-| `seeking_tool` | 0.8 | "Is there an app that..." |
-| `frustrated` | 0.6 | "Current options suck..." |
-| `feature_request` | 0.5 | "Wish someone would build..." |
-
-## Opportunity Scoring
-
-Each pain point receives a composite score (0.0–1.0):
-
-```
-score = 0.20 * normalized_upvotes
-      + 0.20 * sentiment_intensity
-      + 0.20 * validation_score (from comment analysis)
-      + 0.15 * cross_subreddit_multiplier
-      + 0.15 * intent_weight
-      + 0.10 * recency_weight (90-day half-life)
-```
-
-### Comment Validation Signals
-
-| Signal | Effect | Meaning |
-|--------|--------|---------|
-| Unanswered post | +0.3 | Genuine market gap |
-| "Me too" replies | +0.1 each (cap 0.3) | Demand confirmation |
-| Competitor + negative sentiment | +0.2 | Unbundling opportunity |
-| Competitor + positive reception | -0.4 | Not a gap |
-| High engagement, no consensus | +0.2 | Fragmented market |
-
-## Clustering
-
-Similar complaints are grouped into market opportunities using:
-- TF-IDF vectorization (unigrams + bigrams, English stop words removed)
-- Agglomerative clustering with cosine distance threshold of 0.65
-- Auto-labeling from top TF-IDF terms
-
-Clusters track cross-subreddit spread and trending status (2x volume spike in last 30 days).
-
-## Seed Subreddits
-
-Preconfigured categories in `config.py`:
-
-```
-smb_saas:     smallbusiness, Entrepreneur, SaaS, startups, indiehackers
-productivity: productivity, selfhosted, nocode, Automate
-dev_tools:    webdev, devops, programming, sideproject
-freelance:    freelance, DigitalNomad, WorkOnline
-```
-
-Add more via `discover` or edit `config.py` directly.
-
-## Project Structure
+## Project layout
 
 ```
 reddit-market-intel/
-├── main.py                    # CLI (click)
-├── config.py                  # Settings and seed subreddits
-├── schema.sql                 # SQLite schema
+├── main.py                       # CLI (click)
+├── config.py                     # All tunables (seeds, weights, LLM budget, profiles)
+├── schema.sql                    # SQLite schema (source of truth)
+├── DECISIONS.md                  # Append-only ADR log
+├── TODO.md                       # Active sprint + Hardening + Recent log
 ├── requirements.txt
 ├── scraper/
-│   ├── base.py                # BaseScraper ABC
-│   ├── json_scraper.py        # No-auth JSON API scraper
-│   ├── praw_scraper.py        # PRAW OAuth scraper + factory
-│   ├── comments.py            # Comment thread classifier
-│   └── rate_limiter.py        # Token bucket + backoff
+│   ├── base.py                   # ABC + RedditPost/Comment dataclasses
+│   ├── json_scraper.py           # No-auth JSON fallback
+│   ├── praw_scraper.py           # PRAW + scraper factory
+│   ├── comments.py               # Comment validation flag classifier
+│   └── rate_limiter.py           # Token bucket + exponential backoff
 ├── analysis/
-│   ├── keywords.py            # 25 regex pain-point patterns
-│   ├── classifier.py          # Pattern matching engine
-│   ├── validators.py          # Comment-based validation scoring
-│   ├── scorer.py              # Composite opportunity scoring
-│   └── clustering.py          # TF-IDF deduplication
-├── discovery/
-│   └── subreddit_finder.py    # Related sub discovery
+│   ├── classifier.py             # RAG-primary, regex-fallback wrapper
+│   ├── rag_classifier.py         # sentence-transformers + ChromaDB
+│   ├── keywords.py               # Regex pain-point patterns
+│   ├── validators.py             # Comment-based validation scoring
+│   ├── scorer.py                 # Composite opportunity score
+│   ├── market_signals.py         # Monetization / simplicity / market-size + Lienclear facets
+│   ├── clustering.py             # TF-IDF agglomerative
+│   ├── cluster_delta.py          # Snapshot + week-over-week delta
+│   ├── niches.py                 # K-means meta-cluster of clusters
+│   └── llm_extractor.py          # Phase 3 — batch export + import + validation
 ├── storage/
-│   └── db.py                  # SQLite CRUD
-└── export/
-    └── report.py              # Clustered markdown reports
+│   └── db.py                     # SQLite CRUD + migration ledger
+├── discovery/
+│   └── subreddit_finder.py       # Sidebar + crosspost discovery
+├── export/
+│   ├── report.py                 # Per-cluster opportunity report
+│   ├── digest.py                 # Weekly digest (Phase 3 veto active)
+│   ├── competitor_gaps.py        # Lienclear deep-profile gap report
+│   └── seo_phrases.py            # Lienclear SEO phrase extractor
+└── tests/                        # 194 tests covering CLI, CRUD, RAG, LLM extractor, roundtrip, digest veto
 ```
 
-## Example Workflow
+## Database
 
-```bash
-# 1. Scrape multiple categories
-python main.py scrape --category smb_saas --limit 100
-python main.py scrape --category freelance --limit 100
+| Table | Role |
+|---|---|
+| `posts` / `comments` | Raw scraped content (one row per Reddit ID) |
+| `pain_points` | RAG-classifier output: intent_category + opportunity_score + validation |
+| `clusters` | TF-IDF clusters of similar pain_points; one row per cluster |
+| `niches` | K-means meta-clusters over cluster centroids; rank_score drives the digest |
+| `pain_facets` | **Phase 3** — LLM-extracted structured facets, gated by `prompt_version` |
+| `subreddits` | Per-sub metadata + `last_scraped` for `scrape-all` age skipping |
+| `verdicts` | **Phase 5** — operator build/watch/kill decisions (stubbed) |
+| `migrations` | Ledger of applied schema migrations |
 
-# 2. Discover more subreddits
-python main.py discover --from smallbusiness
-
-# 3. Analyze everything
-python main.py analyze
-
-# 4. Check what we found
-python main.py status
-
-# 5. Export for deep analysis
-python main.py export --top 30 --output opportunities.md --min-score 0.4
-
-# 6. Open in Claude Code for strategic analysis
-# "Read opportunities.md and rank the top 5 by build feasibility for a solo developer"
-```
+Schema is in `schema.sql` (idempotent CREATE). ALTER-style migrations go through `storage/db.py:MIGRATIONS` and the `migrations` ledger.
 
 ## Configuration
 
-All tunable parameters live in `config.py`:
+All knobs in `config.py`. Highlights:
 
-- Rate limiting (delay, jitter, retries)
-- Scoring weights and intent weights
-- Clustering threshold and TF-IDF features
-- Recency half-life
-- Trending multiplier
-- Comment parsing depth
+```python
+# Scraping
+DEFAULT_LIMIT = 100
+DEFAULT_SORT = "hot"
+JSON_API_DELAY = 1.0
+
+# RAG classifier
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+SIMILARITY_THRESHOLD = 0.35
+
+# Scoring weights (must sum to 1.0)
+SCORING_WEIGHTS = {...}
+INTENT_WEIGHTS = {"would_pay": 1.0, "seeking_tool": 0.8, ...}
+
+# Phase 3 LLM extraction
+LLM_DEFAULT_MODE = "batch"           # batch | api (api Phase 3.5)
+LLM_BATCH_SIZE = 50
+LLM_MAX_POSTS_PER_RUN = 500          # circuit breaker
+LLM_RAG_PREFILTER = True
+LLM_PROMPT_VERSION = "v0.1"          # bump to widen re-extract selection
+LLM_PRICING = {"claude-haiku-4-5": {...}, ...}
+
+# Clustering
+CLUSTER_DISTANCE_THRESHOLD = 0.85
+TRENDING_MULTIPLIER = 2.0
+RECENCY_HALF_LIFE_DAYS = 90
+
+# Lienclear deep-profile (optional overlay, off by default)
+PROFILES = {"lienclear": {...}}
+```
+
+## Example weekly workflow
+
+```bash
+# Monday morning — refresh corpus
+python main.py scrape-all --max-age-days 7 --limit 100
+
+# Tuesday — classify + cluster + niche
+python main.py analyze
+python main.py snapshot  # for week-over-week delta later
+
+# Wednesday — LLM facet extraction (~30 min Claude Code session)
+python main.py llm-extract --max-posts 200 --prefilter strict
+# (process batches in a Claude Code session)
+python main.py llm-import data/llm_batches/<UTC-ts>/
+
+# Thursday — read the digest, decide what to build
+python main.py digest
+# → opens reports/weekly/<date>.md
+```
+
+## Phases (5-phase discovery-engine pivot)
+
+| Phase | Status | What |
+|---|---|---|
+| 1 | shipped | Skeleton digest with dumb scoring |
+| 2 | shipped | Broaden corpus from 5 categories → 12-vertical / ~100 subs |
+| 3 | shipped | LLM batch-mode facet extraction + digest veto |
+| 3.5 | deferred | API mode (Anthropic SDK + cost tracking + circuit breakers) |
+| 4 | next | Real `complexity_score` + `revenue_score` from facets |
+| 5 | next | Verdict capture + taste-learning + corpus-internal saturation (W7-1) |
+
+See `DECISIONS.md` for the architectural choices behind each phase.
+
+## Why this exists
+
+Personal tool. Reddit is a firehose of unmet need; this collapses a week of scrolling into a one-page digest of ranked candidates. Audience of one — me.
