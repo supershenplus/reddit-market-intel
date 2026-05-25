@@ -27,6 +27,10 @@ SEEDS: dict[str, list[str]] = {
         "Is there a simple lien waiver tool that handles state-specific forms?",
         "Looking for a Levelset alternative now that Procore bought it",
         "Need software to generate conditional and unconditional waivers",
+        "How do I record this transaction in QuickBooks?",
+        "What's the best way to handle this in QBO?",
+        "Anyone know a clean way to track this in QuickBooks Online?",
+        "How do you handle multi-entity bookkeeping in QBO?",
     ],
     "would_pay": [
         "I would gladly pay for a solution to this problem",
@@ -50,6 +54,8 @@ SEEDS: dict[str, list[str]] = {
         "Textura charges us $25 every single pay application, absurd",
         "Every GC wants a different system, Procore Textura paper AIA forms",
         "Almost signed an unconditional final waiver before getting my check, would have given up lien rights",
+        "QuickBooks has no clean way to handle this, every workaround breaks something else",
+        "Spent hours trying to figure out how to record this properly in QBO and there's no good answer",
     ],
     "feature_request": [
         "I wish there was a simple way to do this",
@@ -125,10 +131,11 @@ class RAGClassifier:
         self._collection.add(documents=docs, embeddings=embeddings, ids=ids, metadatas=metas)
         # Stamp the hash LAST — it is the commit marker. A crash before this
         # point leaves no/stale hash, so the next run reseeds rather than
-        # trusting a partially embedded collection.
-        self._collection.modify(
-            metadata={"hnsw:space": "cosine", "seeds_hash": current_hash}
-        )
+        # trusting a partially embedded collection. Distance function is locked
+        # at collection-create time (hnsw:space=cosine above), so we only stamp
+        # seeds_hash here — chroma's modify() rejects any hnsw:space entry
+        # even when the value matches.
+        self._collection.modify(metadata={"seeds_hash": current_hash})
 
     def classify(self, title: str, body: str) -> dict | None:
         self._load()
