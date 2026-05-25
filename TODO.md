@@ -2,6 +2,12 @@
 
 **Active item:** Pick up with **W4-1 competition-density facet** (count distinct products mentioned per cluster — same facet-only shape as DIY/urgency/frequency/W5-7 heat signals). Or pivot to **W4-3 specificity facet** (vague vs concrete asks) or **W5-10 cross-ref vs Phase2Roadmap** (requires startup_docs file from supershenplus repo first). Today's session shipped 9 backlog items + 6 unpushed commits awaiting user `! git push origin master`: 8092569 W5-11, 0ea6ef6 W5-12, 57dd491 docs, 86dfabc W4-2+W4-6 facets, 8dc19ac docs, 94cf6b8 W5-7 heat-signals.
 
+## Critical
+
+> Architectural-level items flagged for prioritization before further sprint expansion. Resolve before adding more thesis-specific code.
+
+- [ ] **CRIT-1 (multi-thesis refactor)** — The Lienclear-ness is *content*, not architecture. Looking again, the `scraper`/`discovery`/`analysis`/`storage`/`export` split is genuinely generic; the Lienclear stuff lives almost entirely in `config.py` patterns, `LIENCLEAR_*` weight tables, and one scoring function (`compute_lienclear_relevance` in `analysis/market_signals.py`). Refactor into `profiles/<thesis>.yaml` (phrase packs + phase patterns + role multipliers + bellwether sources + scoring weights) and you've got a real multi-tenant thesis engine on the same pipeline. **Scope: 1-2 week refactor, not a rewrite.** Filed 2026-05-25 — previously undersold; the leverage here is much larger than continuing to bolt thesis-specific facets onto the current shape.
+
 ## W1 — Initial validation
 
 - [x] **W1-1** End-to-end smoke test: `scrape --subreddit smallbusiness --limit 10` → `analyze` → `export` → verify report.md output
@@ -42,6 +48,11 @@
 - [ ] **W4-8** Price anchor signal — explicit $ amounts mentioned → monetization validation
 - [ ] **W4-9** Trending detection improvement — weekly post-count delta per cluster, not just boolean flag
 - [ ] **W4-10** Cluster quality score — single-post clusters are noise; penalize until 3+ posts agree
+- [ ] **W4-11 (niche-level scoring)** — Current scoring is per-post (composite `opportunity_score`) with cluster-level aggregates as a thin roll-up. Add a higher-tier `niche` aggregation: embed cluster centroids, re-cluster clusters into ~5–15 "niches" per profile (e.g. "small-landlord ops", "AIA pay-app workflow", "QBO multi-entity bookkeeping"). Score each *niche* — not each post — on:
+  - `complexity_score` — heuristic for build difficulty (regulated? multi-state? data-integration-heavy? real-time? auth/PII surface? mobile-required?)
+  - `revenue_score` — heuristic for monetization ceiling (B2B vs B2C? enterprise/SMB/consumer buyer? recurring vs one-time? explicit WTP anchors? competitor pricing tier evidence?)
+
+  Goal: rank niches by *(revenue_score / complexity_score)* so the operator skims a short list of niches, not a wall of 700+ clusters. Files: new `analysis/niches.py` (meta-cluster + niche scorer), new `niches` table in `schema.sql`. Filed 2026-05-25.
 
 ## W5 — Lienclear market research
 
@@ -95,6 +106,23 @@
 - [ ] **W6-6** Response capture loop — `python main.py outreach-record --author <handle>` to log responses + extracted willingness-to-pay band into `outreach` table. Feed back into `lienclear_relevance_score` as a hard validation boost (×1.5 on score if author confirms WTP)
 - [ ] **W6-7** Ethics + compliance guardrails — Reddit ToS forbids spammy outreach; cap messaging at ≤5 candidates per cluster per week, no follow-up if no response, disclose research purpose upfront. Document in CLAUDE.md before first DM goes out
 - [ ] **W6-8** Conversion measurement — track DM→reply→interview→customer funnel separately from passive-scrape signal so we know which mode actually moved the Lienclear decision
+
+## W7 — Saturation discipline (post-CRIT-1)
+
+> Prevent the "all three saturated" failure mode from the 2026-05-25 r/DarkAndDarker scan, where every flagged opportunity (price check, build calculator, interactive map) already had 3+ mature competitors. Reports should auto-flag candidates whose theme already has tooling so we don't keep pitching solved problems. Sequenced after [CRIT-1](#critical) so saturation can be built profile-aware from day 1 (profiles declare per-thesis search-phrase sets and known competitor lists).
+
+- [ ] **W7-1** Saturation-export CLI — `python main.py saturation-export` writes `reports/saturation_review_<date>.md` with top-N (default 20) cluster themes from the most recent analyze. Each row: `cluster_label`, `post_count`, `avg_opportunity_score`, 3-5 suggested search queries derived from cluster's top TF-IDF terms + subreddit, plus blank columns for the user to fill in (`existing_tools[]`, `saturation_verdict`, `notes`). No external search API — keeps the project zero-dep and zero-cost; user runs the searches themselves. Auto-fires at the end of `analyze` so the review file is always fresh against the current corpus. Filed 2026-05-25.
+
+## W8 — Operator triage workflow
+
+> The pipeline outputs reports for human review but doesn't capture the operator's per-opportunity verdict or learn from it. Add a triage layer: a ranked weekly digest the operator skims, marks each candidate `build / watch / kill`, and verdicts feed back into ranking so subsequent digests learn the operator's taste. Output is for skim-once-a-week, not a dashboard you stare at.
+
+- [ ] **W8-1 (weekly triage digest + verdict capture)** — `python main.py digest` emits `reports/triage_<date>.md`: ranked top 20–30 niches/clusters by current score, each row with one-line summary + verdict checkbox set `[ ] build  [ ] watch  [ ] kill` + `note:` field. After operator fills it in, `python main.py digest-record <file>` parses verdicts back into a new `verdicts` table (`subject_type, subject_id, decision, decided_at, note`). Subsequent digests:
+  - Hide `kill`-marked subjects (or surface only on demand)
+  - Boost niches semantically similar to `build`-marked past niches (taste-learning via embedding similarity to prior `build` decisions)
+  - Track `watch` subjects across weekly runs; alert if score / post_count grows materially since the watch decision
+
+  Cadence: designed for once-a-week run, not real-time. Dependencies: post-[CRIT-1](#critical) (per-profile digest), [W4-11](#w4--scoring-matrix-v2-scope-expansion--tons-missed-in-v1) (niche aggregation makes the digest skim-able), [W7-1](#w7--saturation-discipline-post-crit-1) (digest rows should include saturation verdict column). Filed 2026-05-25.
 
 ## Hardening
 
