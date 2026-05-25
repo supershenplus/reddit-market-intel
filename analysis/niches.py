@@ -6,13 +6,15 @@ so the shape of the digest is correct before signal quality work happens in
 Phase 3/4.
 """
 
+import json
 from datetime import datetime
 
 import numpy as np
 from sklearn.cluster import KMeans
 from sentence_transformers import SentenceTransformer
 
-from config import EMBEDDING_MODEL
+from analysis.niche_scorer import best_label_facet, score_niche
+from config import EMBEDDING_MODEL, LLM_PROMPT_VERSION
 from storage.db import Database
 
 
@@ -98,17 +100,30 @@ class NicheBuilder:
         if not all_pps:
             return False
 
-        # Phase 1 dumb label: highest-engagement member post title.
-        ranked = _sort_by(all_pps, _engagement_of)
-        label = (ranked[0]["title"] or "(no title)").strip()[:140]
-
         post_count = sum(c["post_count"] or 0 for c in all_clusters)
         subreddits = {p["subreddit"] for p in all_pps if p.get("subreddit")}
 
+        # Phase 4 — gather facets across all clusters in this niche.
+        all_facets = []
+        for c in all_clusters:
+            all_facets.extend(
+                self.db.get_facets_for_cluster_at_version(c["id"], LLM_PROMPT_VERSION)
+            )
+
         opp_scores = [p["opportunity_score"] for p in all_pps if p.get("opportunity_score")]
-        revenue = sum(opp_scores) / len(opp_scores) if opp_scores else 0.0
-        complexity = 0.5  # Phase 1 dumb scorer; real complexity in Phase 4.
-        rank = revenue / (1 + complexity)
+        fallback_avg = sum(opp_scores) / len(opp_scores) if opp_scores else 0.0
+        revenue, complexity, rank, breakdown, _mode = score_niche(
+            all_facets, post_count, fallback_avg,
+        )
+
+        # Phase 4 label: highest-confidence faceted pain_summary, else
+        # Phase-1 fallback (highest-engagement member title).
+        label_facet = best_label_facet(all_facets)
+        if label_facet and label_facet.get("pain_summary"):
+            label = label_facet["pain_summary"].strip()[:140]
+        else:
+            ranked = _sort_by(all_pps, _engagement_of)
+            label = (ranked[0]["title"] or "(no title)").strip()[:140]
 
         utcs = [p["created_utc"] for p in all_pps if p.get("created_utc")]
         first_seen = datetime.fromtimestamp(min(utcs)).isoformat() if utcs else None
@@ -127,7 +142,53 @@ class NicheBuilder:
             "first_seen": first_seen,
             "last_seen": last_seen,
             "centroid": centroid_vec.astype(np.float32).tobytes(),
+            "score_breakdown": json.dumps(breakdown),
         })
         for c in all_clusters:
             self.db.update_cluster_niche(c["id"], niche_id)
         return True
+
+
+def rescore_existing_niches(db: Database) -> dict:
+    """Re-score all existing niches against current weights without
+    re-embedding or re-niching. Reads niches as-is (preserves cluster
+    assignments, centroids, first_seen, last_seen), only updates
+    (label, complexity_score, revenue_score, rank_score, score_breakdown).
+
+    Returns {rescored: N, faceted: N, fallback: N}."""
+    niches = [dict(r) for r in db.conn.execute("SELECT * FROM niches")]
+    faceted = 0
+    fallback = 0
+    for niche in niches:
+        clusters = db.get_clusters_for_niche(niche["id"])
+        all_pps = []
+        all_facets = []
+        for c in clusters:
+            pps = db.get_pain_points_for_cluster(c["id"])
+            all_pps.extend(pps)
+            all_facets.extend(
+                db.get_facets_for_cluster_at_version(c["id"], LLM_PROMPT_VERSION)
+            )
+        post_count = sum((c["post_count"] or 0) for c in clusters)
+        opp_scores = [p["opportunity_score"] for p in all_pps if p.get("opportunity_score")]
+        fallback_avg = sum(opp_scores) / len(opp_scores) if opp_scores else 0.0
+        revenue, complexity, rank, breakdown, mode = score_niche(
+            all_facets, post_count, fallback_avg,
+        )
+        label_facet = best_label_facet(all_facets)
+        if label_facet and label_facet.get("pain_summary"):
+            label = label_facet["pain_summary"].strip()[:140]
+        else:
+            ranked = _sort_by(all_pps, _engagement_of)
+            label = (
+                (ranked[0]["title"] or "(no title)").strip()[:140]
+                if ranked else niche["label"]
+            )
+        db.update_niche_scores(
+            niche["id"], label, complexity, revenue, rank, json.dumps(breakdown),
+        )
+        if mode == "faceted":
+            faceted += 1
+        else:
+            fallback += 1
+    return {"rescored": len(niches), "faceted": faceted, "fallback": fallback}

@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS niches (
     saturation_note TEXT,
     first_seen TEXT,
     last_seen TEXT,
-    centroid BLOB
+    centroid BLOB,
+    score_breakdown TEXT
 );
 
 -- Operator verdicts captured by triage workflow (Phase 5). Stubbed in Phase 1

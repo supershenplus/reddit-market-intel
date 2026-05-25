@@ -49,6 +49,9 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_facets_domain ON pain_facets(domain);
         CREATE INDEX IF NOT EXISTS idx_facets_wtp ON pain_facets(willingness_to_pay);
     """),
+    ("0003_niches_add_score_breakdown", """
+        ALTER TABLE niches ADD COLUMN score_breakdown TEXT;
+    """),
 ]
 
 
@@ -280,18 +283,42 @@ class Database:
         self.conn.commit()
 
     def insert_niche(self, niche: dict) -> int:
+        # score_breakdown is optional (Phase 4 adds it; pre-Phase-4 callers
+        # may not pass it, in which case it lands as NULL).
+        niche.setdefault("score_breakdown", None)
         cur = self.conn.execute(
             """INSERT INTO niches
                (label, description, post_count, cluster_count, sub_count,
                 complexity_score, revenue_score, rank_score, saturation_note,
-                first_seen, last_seen, centroid)
+                first_seen, last_seen, centroid, score_breakdown)
                VALUES (:label, :description, :post_count, :cluster_count, :sub_count,
                        :complexity_score, :revenue_score, :rank_score, :saturation_note,
-                       :first_seen, :last_seen, :centroid)""",
+                       :first_seen, :last_seen, :centroid, :score_breakdown)""",
             niche,
         )
         self.conn.commit()
         return cur.lastrowid
+
+    def update_niche_scores(
+        self, niche_id: int, label: str,
+        complexity_score: float, revenue_score: float, rank_score: float,
+        score_breakdown: str,
+    ):
+        """In-place rescore for `analyze --rescore-niches`. Leaves the niche's
+        cluster assignments + centroid + first_seen alone — only score fields
+        and the label move (since label is derived from facets too)."""
+        self.conn.execute(
+            """UPDATE niches SET
+                 label = ?,
+                 complexity_score = ?,
+                 revenue_score = ?,
+                 rank_score = ?,
+                 score_breakdown = ?
+               WHERE id = ?""",
+            (label, complexity_score, revenue_score, rank_score,
+             score_breakdown, niche_id),
+        )
+        self.conn.commit()
 
     def update_cluster_niche(self, cluster_id: int, niche_id: int):
         self.conn.execute(
@@ -383,6 +410,21 @@ class Database:
         )
         row = cur.fetchone()
         return dict(row) if row else None
+
+    def get_facets_for_cluster_at_version(
+        self, cluster_id: int, prompt_version: str,
+    ) -> list[dict]:
+        """All pain_facets rows for posts in this cluster at the given
+        prompt_version. Phase 4 scorer reads these; the scorer applies the
+        is_pain_point=1 filter itself so the LLM veto state is also preserved
+        in the score_breakdown for Phase 5 audit."""
+        cur = self.conn.execute(
+            """SELECT pf.* FROM pain_facets pf
+               JOIN pain_points pp ON pp.post_id = pf.post_id
+               WHERE pp.cluster_id = ? AND pf.prompt_version = ?""",
+            (cluster_id, prompt_version),
+        )
+        return [dict(r) for r in cur.fetchall()]
 
     def get_pain_points_for_cluster_unvetoed(
         self, cluster_id: int, prompt_version: str,

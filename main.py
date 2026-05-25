@@ -226,9 +226,33 @@ def scrape_all(max_age_days, limit, sort, comments):
     "(extracts thesis-specific facets into matched_patterns). "
     "Off by default — the discovery path is thesis-agnostic.",
 )
-def analyze(force, deep_profile):
-    """Run analysis pipeline: classify, validate, score, and cluster pain points."""
+@click.option(
+    "--rescore-niches",
+    is_flag=True,
+    default=False,
+    help="Phase 4 — re-score existing niches against current scoring "
+    "weights without re-clustering. Fast iteration loop for weight tuning.",
+)
+def analyze(force, deep_profile, rescore_niches):
+    """Run analysis pipeline: classify, validate, score, and cluster pain points.
+
+    --rescore-niches: skip the entire classify+cluster+score path and just
+    re-score existing niches against current Phase 4 weights. Fast loop for
+    tuning REVENUE_SCORE_WEIGHTS / COMPLEXITY_SCORE_WEIGHTS without burning
+    a 30-second full pipeline run."""
     db = Database()
+
+    if rescore_niches:
+        from analysis.niches import rescore_existing_niches
+        console.print("[bold]Rescoring existing niches against current weights...[/bold]")
+        result = rescore_existing_niches(db)
+        console.print(
+            f"[bold green]Rescored {result['rescored']} niches "
+            f"(faceted: {result['faceted']}, fallback: {result['fallback']}).[/bold green]"
+        )
+        db.close()
+        return
+
     classifier = PainPointClassifier()
     scorer = OpportunityScorer()
 

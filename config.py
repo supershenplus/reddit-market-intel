@@ -413,6 +413,51 @@ LLM_RAG_PREFILTER = True
 # prompt tweak triggers a full-corpus re-run at full cost.
 LLM_PROMPT_VERSION = "v0.1"
 
+# ---------------------------------------------------------------------------
+# Phase 4 — niche scoring from pain_facets
+# Replaces the Phase-1 dumb scorer (revenue=avg opportunity, complexity=0.5
+# constant) with rule-based functions in analysis/niche_scorer.py. Weights
+# below are UNCALIBRATED v0 heuristics — Phase 5 verdict capture will
+# calibrate against real build/watch/kill decisions. Tune freely; rank
+# instability between runs is fine until verdicts exist.
+# ---------------------------------------------------------------------------
+
+# Revenue signal weights (must sum to 1.0).
+REVENUE_SCORE_WEIGHTS = {
+    "willingness_to_pay": 0.30,
+    "max_dollar_anchor":  0.20,
+    "market_size_signal": 0.20,
+    "urgency":            0.20,
+    "buyer_role":         0.10,
+}
+
+# Complexity signal weights (must sum to 1.0). Domain heuristic deliberately
+# excluded — collinear with market_size_signal and would double-count the
+# Lienclear sub-weighting bias.
+COMPLEXITY_SCORE_WEIGHTS = {
+    "integrations_count": 0.40,
+    "market_size_signal": 0.20,
+    "complexity_keywords": 0.40,
+}
+
+# Per-facet confidence is clipped to this range before weighting. Lower
+# bound prevents low-confidence niches from being arbitrarily depressed;
+# upper bound prevents a single confident outlier from dominating ten
+# weaker agreements. Both ends are deliberately not 0 or 1.
+FACET_CONFIDENCE_CLIP = (0.3, 0.85)
+
+# Minimum sum of clipped confidences across a niche's faceted members for
+# the niche to be eligible for facet-based scoring. Below this, fall back
+# to the Phase-1 dumb scorer regardless of how many facet rows exist.
+NICHE_MIN_EFFECTIVE_N = 1.5
+
+# Scanned against pain_summary AND integrations_mentioned. Each hit adds
+# 0.2 to the keyword sub-score (capped at 1.0). Keep small.
+COMPLEXITY_KEYWORDS = [
+    "real-time", "multi-state", "compliance", "auth", "PII",
+    "scale", "enterprise integration",
+]
+
 # Profile overlays — selected via `--profile` CLI flag on export
 PROFILES = {
     "lienclear": {

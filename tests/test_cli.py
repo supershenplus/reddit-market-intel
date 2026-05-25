@@ -169,6 +169,50 @@ def test_export_profile_lienclear_partitions_by_phase(runner, cli_db, tmp_path):
     assert docusign_idx > p3_idx  # the DocuSign post appears under Phase 3
 
 
+def test_analyze_rescore_niches_updates_scores(runner, cli_db):
+    """Phase 4 --rescore-niches: re-runs the scorer over existing niches
+    without touching the classify/cluster path. With no facets present, all
+    niches route to dumb_fallback and pick up the Phase-1 score shape.
+    """
+    import json
+
+    # Seed: post → pain_point → cluster → niche
+    _seed_post(cli_db, reddit_id="t3_n1", subreddit="x", title="t")
+    post = cli_db.get_post_by_reddit_id("t3_n1")
+    _seed_pain_point(cli_db, post["id"])
+    cur = cli_db.conn.execute(
+        "INSERT INTO clusters (label, post_count, avg_opportunity_score, "
+        "subreddits, first_seen, last_seen, trending) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("c1", 1, 0.5, "[]", "2026-05-25", "2026-05-25", 0),
+    )
+    cluster_id = cur.lastrowid
+    cli_db.conn.execute(
+        "UPDATE pain_points SET cluster_id = ? WHERE post_id = ?",
+        (cluster_id, post["id"]),
+    )
+    niche_id = cli_db.insert_niche({
+        "label": "stale label",
+        "description": None, "post_count": 1, "cluster_count": 1, "sub_count": 1,
+        "complexity_score": 0.99, "revenue_score": 0.99, "rank_score": 0.99,
+        "saturation_note": None, "first_seen": "2026-05-25", "last_seen": "2026-05-25",
+        "centroid": None,
+    })
+    cli_db.update_cluster_niche(cluster_id, niche_id)
+
+    result = runner.invoke(main.cli, ["analyze", "--rescore-niches"])
+    assert result.exit_code == 0, result.output
+    assert "Rescored 1 niches" in result.output
+
+    # Niche was rescored — complexity dropped from 0.99 stale → 0.5 fallback
+    niche = dict(cli_db.conn.execute(
+        "SELECT * FROM niches WHERE id = ?", (niche_id,),
+    ).fetchone())
+    assert niche["complexity_score"] == 0.5  # dumb-fallback constant
+    bd = json.loads(niche["score_breakdown"])
+    assert bd["mode"] == "dumb_fallback"
+    assert bd["breakdown_version"] == "v1"
+
+
 def test_export_profile_default_omits_domain_hit(runner, cli_db, tmp_path):
     _seed_post(cli_db, reddit_id="t3_lien", subreddit="Contractor", title=_DOMAIN_TITLE)
     out = tmp_path / "default.md"
