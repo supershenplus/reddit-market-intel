@@ -8,6 +8,19 @@ from typing import Optional
 from config import DB_PATH, DATA_DIR
 
 
+# Ordered ALTER migrations. CREATE TABLE additions belong in schema.sql
+# (idempotent via IF NOT EXISTS); ALTER TABLE ADD COLUMN can't be expressed
+# idempotently in SQLite so it goes here, gated by the migrations ledger.
+# Each migration's sql runs via executescript() so multi-statement (ALTER +
+# dependent index) lands atomically.
+MIGRATIONS = [
+    ("0001_clusters_add_niche_id", """
+        ALTER TABLE clusters ADD COLUMN niche_id INTEGER;
+        CREATE INDEX IF NOT EXISTS idx_cluster_niche ON clusters(niche_id);
+    """),
+]
+
+
 class Database:
     """Handles all SQLite CRUD operations."""
 
@@ -24,9 +37,10 @@ class Database:
         with open(schema_path) as f:
             self.conn.executescript(f.read())
         self._migrate_columns()
+        self._run_migrations()
 
     def _migrate_columns(self):
-        """Add new columns to existing DBs without losing data."""
+        """Legacy ALTER-with-catch migrations (pre-ledger). New ALTERs go in MIGRATIONS."""
         new_cols = [
             ("monetization_score", "REAL", "0.0"),
             ("solution_simplicity", "REAL", "0.5"),
@@ -40,6 +54,21 @@ class Database:
                 self.conn.commit()
             except Exception:
                 pass  # column already exists
+
+    def _run_migrations(self):
+        applied = {r[0] for r in self.conn.execute("SELECT name FROM migrations")}
+        for name, sql in MIGRATIONS:
+            if name in applied:
+                continue
+            try:
+                self.conn.executescript(sql)
+            except sqlite3.OperationalError as e:
+                # Column may already exist from a prior unledgered ALTER; record as
+                # applied so we don't retry every startup.
+                if "duplicate column" not in str(e).lower():
+                    raise
+            self.conn.execute("INSERT INTO migrations (name) VALUES (?)", (name,))
+            self.conn.commit()
 
     def close(self):
         self.conn.close()
@@ -193,6 +222,63 @@ class Database:
             )
         else:
             cur = self.conn.execute("SELECT * FROM subreddits WHERE active = 1")
+        return [dict(r) for r in cur.fetchall()]
+
+    # --- Niches (Phase 1 discovery-engine pivot) ---
+
+    def get_clusters_for_niching(self, min_post_count: int = 2) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM clusters WHERE post_count >= ? ORDER BY post_count DESC",
+            (min_post_count,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_pain_points_for_cluster(self, cluster_id: int) -> list[dict]:
+        cur = self.conn.execute(
+            """SELECT pp.*, p.title, p.body, p.subreddit, p.url,
+                      p.score AS reddit_score, p.num_comments, p.created_utc
+               FROM pain_points pp JOIN posts p ON pp.post_id = p.id
+               WHERE pp.cluster_id = ?""",
+            (cluster_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def clear_niches(self):
+        self.conn.execute("UPDATE clusters SET niche_id = NULL")
+        self.conn.execute("DELETE FROM niches")
+        self.conn.commit()
+
+    def insert_niche(self, niche: dict) -> int:
+        cur = self.conn.execute(
+            """INSERT INTO niches
+               (label, description, post_count, cluster_count, sub_count,
+                complexity_score, revenue_score, rank_score, saturation_note,
+                first_seen, last_seen, centroid)
+               VALUES (:label, :description, :post_count, :cluster_count, :sub_count,
+                       :complexity_score, :revenue_score, :rank_score, :saturation_note,
+                       :first_seen, :last_seen, :centroid)""",
+            niche,
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def update_cluster_niche(self, cluster_id: int, niche_id: int):
+        self.conn.execute(
+            "UPDATE clusters SET niche_id = ? WHERE id = ?",
+            (niche_id, cluster_id),
+        )
+        self.conn.commit()
+
+    def get_top_niches(self, n: int = 10) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM niches ORDER BY rank_score DESC LIMIT ?", (n,)
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_clusters_for_niche(self, niche_id: int) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM clusters WHERE niche_id = ?", (niche_id,)
+        )
         return [dict(r) for r in cur.fetchall()]
 
     # --- Stats ---

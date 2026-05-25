@@ -25,10 +25,12 @@ from analysis.market_signals import (
     compute_lienclear_relevance,
 )
 from analysis.clustering import PainPointClusterer
+from analysis.niches import NicheBuilder
 from discovery.subreddit_finder import SubredditFinder
 from export.report import ReportGenerator
 from export.competitor_gaps import CompetitorGapReport
 from export.seo_phrases import SEOPhraseReport
+from export.digest import DigestWriter
 from analysis.cluster_delta import (
     save_snapshot,
     load_snapshot,
@@ -126,7 +128,15 @@ def scrape(subreddit, category, limit, sort, comments):
     default=False,
     help="Re-analyze all posts (drops pain_points + clusters first)",
 )
-def analyze(force):
+@click.option(
+    "--deep-profile",
+    type=click.Choice(["lienclear"]),
+    default=None,
+    help="Run an optional deep-profile overlay on each classified post "
+    "(extracts thesis-specific facets into matched_patterns). "
+    "Off by default — the discovery path is thesis-agnostic.",
+)
+def analyze(force, deep_profile):
     """Run analysis pipeline: classify, validate, score, and cluster pain points."""
     db = Database()
     classifier = PainPointClassifier()
@@ -146,23 +156,23 @@ def analyze(force):
     # Step 1: Classify unanalyzed posts
     unanalyzed = db.get_posts_without_pain_points()
     console.print(f"[bold]Analyzing {len(unanalyzed)} unprocessed posts...[/bold]")
+    if deep_profile:
+        console.print(f"[dim]Deep profile active: {deep_profile}[/dim]")
 
     matched = 0
     for post in unanalyzed:
         result = classifier.classify(post["title"], post["body"])
         if result:
-            # Lienclear profile signal — extracted at classify-time so it
-            # rides alongside intent in matched_patterns (no schema change).
-            lc = compute_lienclear_relevance(
-                post["title"] or "", post["body"] or "", post["subreddit"]
-            )
             try:
                 existing_mp = json.loads(result["matched_patterns"])
             except (TypeError, ValueError, json.JSONDecodeError):
                 existing_mp = []
-            result["matched_patterns"] = json.dumps(
-                {"intent": existing_mp, "lienclear": lc}
-            )
+            mp_payload = {"intent": existing_mp}
+            if deep_profile == "lienclear":
+                mp_payload["lienclear"] = compute_lienclear_relevance(
+                    post["title"] or "", post["body"] or "", post["subreddit"]
+                )
+            result["matched_patterns"] = json.dumps(mp_payload)
 
             # Get validation score from comments
             comments_raw = db.get_comments_for_post(post["reddit_id"])
@@ -389,6 +399,43 @@ def delta(baseline, output):
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(report, encoding="utf-8")
     console.print(f"[bold green]Delta report exported to {output}[/bold green]")
+    db.close()
+
+
+@cli.command()
+@click.option("--top", "-n", default=10, show_default=True, help="Number of niches to surface")
+@click.option(
+    "--output", "-o", default=None,
+    help="Output markdown path (default: reports/weekly/<today>.md)",
+)
+@click.option(
+    "--n-niches", default=15, show_default=True,
+    help="Niche count for k-means meta-clustering",
+)
+def digest(top, output, n_niches):
+    """Build niches from clusters and emit the weekly markdown digest (Phase 1)."""
+    db = Database()
+    console.print(f"[bold]Meta-clustering into {n_niches} niches via k-means on cluster centroids...[/bold]")
+    builder = NicheBuilder(db, n_niches=n_niches)
+    written = builder.rebuild()
+    if written == 0:
+        console.print(
+            "[yellow]Not enough multi-post clusters to form niches. "
+            "Run `python main.py scrape` + `analyze` first.[/yellow]"
+        )
+        db.close()
+        return
+
+    writer = DigestWriter(db)
+    md = writer.generate(top_n=top)
+
+    if output is None:
+        from datetime import date
+        output = f"reports/weekly/{date.today().isoformat()}.md"
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    Path(output).write_text(md, encoding="utf-8")
+    console.print(f"[bold green]Digest exported to {output}[/bold green]")
+    console.print(f"[dim]{written} niches written. Open: {output}[/dim]")
     db.close()
 
 

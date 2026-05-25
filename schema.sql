@@ -55,7 +55,48 @@ CREATE TABLE IF NOT EXISTS clusters (
     subreddits TEXT,
     first_seen TEXT,
     last_seen TEXT,
-    trending INTEGER DEFAULT 0
+    trending INTEGER DEFAULT 0,
+    niche_id INTEGER
+);
+
+-- Discovery-engine pivot (Phase 1): niches aggregate clusters into 5-15 ranked
+-- candidates surfaced in the weekly markdown digest. centroid is a packed
+-- float32 array (BLOB) used for taste-learning similarity in Phase 5.
+CREATE TABLE IF NOT EXISTS niches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL,
+    description TEXT,
+    post_count INTEGER,
+    cluster_count INTEGER,
+    sub_count INTEGER,
+    complexity_score REAL,
+    revenue_score REAL,
+    rank_score REAL,
+    saturation_note TEXT,
+    first_seen TEXT,
+    last_seen TEXT,
+    centroid BLOB
+);
+
+-- Operator verdicts captured by triage workflow (Phase 5). Stubbed in Phase 1
+-- so the schema is ready when digest-record lands. Identity is subject_label
+-- (not id) so verdicts survive re-niching and re-clustering — same rationale
+-- as cluster_delta uses label-based identity.
+CREATE TABLE IF NOT EXISTS verdicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_type TEXT NOT NULL,
+    subject_label TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    decided_at TEXT DEFAULT (datetime('now')),
+    note TEXT
+);
+
+-- Migration ledger replaces the ALTER-with-exception-catch pattern in
+-- db.py._migrate_columns. Each migration runs once; ledger records it by name.
+CREATE TABLE IF NOT EXISTS migrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    applied_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS subreddits (
@@ -70,5 +111,9 @@ CREATE TABLE IF NOT EXISTS subreddits (
 CREATE INDEX IF NOT EXISTS idx_pp_score ON pain_points(opportunity_score DESC);
 CREATE INDEX IF NOT EXISTS idx_pp_cluster ON pain_points(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_cluster_score ON clusters(avg_opportunity_score DESC);
+-- idx_cluster_niche lives in db.py MIGRATIONS — depends on niche_id column
+-- which is added via ALTER for pre-Phase-1 DBs.
 CREATE INDEX IF NOT EXISTS idx_posts_sub ON posts(subreddit);
 CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_reddit_id);
+CREATE INDEX IF NOT EXISTS idx_niches_rank ON niches(rank_score DESC);
+CREATE INDEX IF NOT EXISTS idx_verdicts_subject ON verdicts(subject_type, subject_label);
