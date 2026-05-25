@@ -33,18 +33,61 @@ DEFAULT_LIMIT = 100
 DEFAULT_SORT = "hot"          # hot, new, top
 COMMENT_DEPTH = 3             # max depth of comment tree to parse
 
-# Seed subreddits by category
+# Seed subreddits by vertical (Phase 2 discovery-engine pivot — 12-vertical
+# taxonomy, ~100 unique subs). Categories are non-disjoint: scrape-all dedupes
+# by sub name, first-category-wins on metadata. Add/remove freely — Reddit
+# returns 404 for unknown subs and the scraper logs + skips.
 SEED_SUBREDDITS = {
-    "smb_saas": ["smallbusiness", "Entrepreneur", "SaaS", "startups", "indiehackers"],
-    "productivity": ["productivity", "selfhosted", "nocode", "Automate"],
-    "dev_tools": ["webdev", "devops", "programming", "sideproject"],
-    "freelance": ["freelance", "DigitalNomad", "WorkOnline"],
-    "construction_subs": [
+    "b2b_saas": [
+        "smallbusiness", "Entrepreneur", "SaaS", "startups", "indiehackers",
+        "microsaas", "AskEntrepreneur", "SideProject", "EntrepreneurRideAlong",
+    ],
+    "vertical_saas": [
+        "legaltech", "lawfirm", "Accounting", "taxpros",
+        "Dentistry", "MedicalAssistant", "Veterinary", "Optometry",
+    ],
+    "dev_tools": [
+        "webdev", "devops", "programming", "ExperiencedDevs",
+        "learnprogramming", "node", "Python", "golang", "rust",
+        "kubernetes", "docker", "sysadmin",
+    ],
+    "marketing": [
+        "marketing", "SEO", "PPC", "content_marketing", "EmailMarketing",
+        "socialmedia", "GrowmyBusiness", "bigseo",
+    ],
+    "freelance": [
+        "freelance", "DigitalNomad", "WorkOnline", "forhire",
+        "freelanceWriters", "graphic_design", "Upwork",
+    ],
+    "ecommerce": [
+        "ecommerce", "shopify", "FulfillmentByAmazon", "AmazonSeller",
+        "EtsySellers", "dropship", "woocommerce",
+    ],
+    "property": [
+        "realestate", "RealEstateInvesting", "Landlord", "PropertyManagement",
+        "AirBnB", "Mortgages",
+    ],
+    "construction": [
         "Construction", "Contractor", "ConstructionManagers",
-        "Electricians", "HVAC", "Plumbing",
-        "Roofing", "Concrete", "Carpentry", "Painting", "Flooring",
-        "Welding", "Estimators",
-        "Bookkeeping",
+        "Electricians", "HVAC", "Plumbing", "Roofing", "Concrete",
+        "Carpentry", "Painting", "Flooring", "Welding", "Estimators",
+    ],
+    "services": [
+        "AutoDetailing", "AutoRepair", "Salon", "tattoo",
+        "lawncare", "landscaping", "CleaningCompany",
+        "petgrooming", "personaltrainer",
+    ],
+    "automation": [
+        "nocode", "Automate", "n8n", "zapier", "MakeAutomation",
+        "RPA", "lowcode",
+    ],
+    "operations": [
+        "projectmanagement", "OperationsManagement", "businessanalysis",
+        "supplychain", "logistics", "ITManagement", "Bookkeeping",
+    ],
+    "leadership": [
+        "managers", "Leadership", "AskManagers",
+        "middlemanagement", "EngineeringManagers", "humanresources",
     ],
 }
 

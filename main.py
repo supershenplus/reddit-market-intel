@@ -2,6 +2,7 @@
 
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Ensure project root is on the path
@@ -51,6 +52,61 @@ def cli():
     pass
 
 
+def _scrape_one_subreddit(db, scraper, sub, category, limit, sort, comments):
+    """Scrape one sub + update its metadata. Returns (new_posts, new_comments)."""
+    posts = scraper.fetch_posts(sub, limit=limit, sort=sort)
+
+    new_posts = 0
+    new_comments = 0
+    for post in posts:
+        if db.insert_post(post.to_dict()):
+            new_posts += 1
+            if comments and post.num_comments > 0:
+                post_comments = scraper.fetch_comments(post.reddit_id)
+                for comment in post_comments:
+                    comment_dict = comment.to_dict()
+                    flags = classify_comment(comment)
+                    comment_dict.update(flags)
+                    db.insert_comment(comment_dict)
+                    new_comments += 1
+
+    info = scraper.get_subreddit_info(sub)
+    db.upsert_subreddit({
+        "name": sub,
+        "subscribers": info.get("subscribers", 0),
+        "category": category,
+        "discovered_from": None,
+        "last_scraped": datetime.now(timezone.utc).isoformat(),
+        "active": 1,
+    })
+    return new_posts, new_comments
+
+
+def _flatten_seed_subreddits():
+    """SEED_SUBREDDITS dict → ordered list of (sub, category) tuples, deduped by sub.
+    First category-wins on duplicates so a sub stays pinned to its primary vertical."""
+    seen = {}
+    for category, subs in SEED_SUBREDDITS.items():
+        for sub in subs:
+            seen.setdefault(sub, category)
+    return list(seen.items())
+
+
+def _is_scraped_within(last_scraped_iso, cutoff_dt):
+    """True if last_scraped_iso parses to a datetime >= cutoff_dt.
+    Returns False for null, malformed, or legacy 'now' literal strings — those
+    are treated as never-scraped so scrape-all re-fetches them."""
+    if not last_scraped_iso:
+        return False
+    try:
+        ts = datetime.fromisoformat(last_scraped_iso)
+    except (TypeError, ValueError):
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts >= cutoff_dt
+
+
 @cli.command()
 @click.option("--subreddit", "-s", help="Specific subreddit to scrape")
 @click.option("--category", "-c", help="Scrape all subs in a category (from config)")
@@ -70,7 +126,6 @@ def scrape(subreddit, category, limit, sort, comments):
         if category in SEED_SUBREDDITS:
             targets = SEED_SUBREDDITS[category]
         else:
-            # Check DB for category
             db_subs = db.get_active_subreddits(category=category)
             targets = [s["name"] for s in db_subs]
         if not targets:
@@ -85,39 +140,71 @@ def scrape(subreddit, category, limit, sort, comments):
 
     for sub in targets:
         console.print(f"\n[bold]Scraping r/{sub} ({sort}, limit={limit})...[/bold]")
-        posts = scraper.fetch_posts(sub, limit=limit, sort=sort)
-
-        new_posts = 0
-        for post in posts:
-            if db.insert_post(post.to_dict()):
-                new_posts += 1
-
-                # Fetch comments for new posts
-                if comments and post.num_comments > 0:
-                    post_comments = scraper.fetch_comments(post.reddit_id)
-                    for comment in post_comments:
-                        comment_dict = comment.to_dict()
-                        # Classify comment validation signals
-                        flags = classify_comment(comment)
-                        comment_dict.update(flags)
-                        db.insert_comment(comment_dict)
-                        total_comments += 1
-
+        new_posts, new_comments = _scrape_one_subreddit(
+            db, scraper, sub, category, limit, sort, comments,
+        )
         total_posts += new_posts
-        console.print(f"  [green]New posts: {new_posts}[/green] (skipped {len(posts) - new_posts} duplicates)")
-
-        # Update subreddit metadata
-        info = scraper.get_subreddit_info(sub)
-        db.upsert_subreddit({
-            "name": sub,
-            "subscribers": info.get("subscribers", 0),
-            "category": category,
-            "discovered_from": None,
-            "last_scraped": "now",
-            "active": 1,
-        })
+        total_comments += new_comments
+        console.print(f"  [green]New posts: {new_posts}, comments: {new_comments}[/green]")
 
     console.print(f"\n[bold green]Done! {total_posts} new posts, {total_comments} comments stored.[/bold green]")
+    db.close()
+
+
+@cli.command("scrape-all")
+@click.option(
+    "--max-age-days", "-a", default=7, show_default=True, type=int,
+    help="Skip subs scraped within this many days (0 = always scrape).",
+)
+@click.option("--limit", "-l", default=DEFAULT_LIMIT, help="Max posts per subreddit")
+@click.option("--sort", default=DEFAULT_SORT, type=click.Choice(["hot", "new", "top"]))
+@click.option("--comments/--no-comments", default=True, help="Also fetch comment threads")
+def scrape_all(max_age_days, limit, sort, comments):
+    """Scrape every configured subreddit, skipping those scraped within --max-age-days."""
+    db = Database()
+    scraper = get_scraper()
+
+    pairs = _flatten_seed_subreddits()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+
+    to_scrape = []
+    skipped = []
+    for sub, category in pairs:
+        info = db.get_subreddit_info(sub)
+        last = info.get("last_scraped") if info else None
+        if _is_scraped_within(last, cutoff):
+            skipped.append(sub)
+        else:
+            to_scrape.append((sub, category))
+
+    console.print(
+        f"[bold]Scrape-all: {len(to_scrape)} subs to scrape, "
+        f"{len(skipped)} skipped (scraped within {max_age_days}d).[/bold]"
+    )
+
+    total_posts = 0
+    total_comments = 0
+    failures = []
+    for sub, category in to_scrape:
+        console.print(f"\n[bold]Scraping r/{sub} ({category}, {sort}, limit={limit})...[/bold]")
+        try:
+            new_posts, new_comments = _scrape_one_subreddit(
+                db, scraper, sub, category, limit, sort, comments,
+            )
+        except Exception as e:
+            console.print(f"  [red]Error on r/{sub}: {e}[/red]")
+            failures.append(sub)
+            continue
+        total_posts += new_posts
+        total_comments += new_comments
+        console.print(f"  [green]New posts: {new_posts}, comments: {new_comments}[/green]")
+
+    console.print(
+        f"\n[bold green]Done! {total_posts} new posts, {total_comments} comments "
+        f"across {len(to_scrape) - len(failures)} subs.[/bold green]"
+    )
+    if failures:
+        console.print(f"[yellow]Failed: {', '.join(failures)}[/yellow]")
     db.close()
 
 
