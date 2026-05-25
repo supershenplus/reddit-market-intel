@@ -52,6 +52,25 @@ MIGRATIONS = [
     ("0003_niches_add_score_breakdown", """
         ALTER TABLE niches ADD COLUMN score_breakdown TEXT;
     """),
+    # Phase 5 migrations: one statement per entry so that executescript's
+    # abort-on-first-failure behavior (when ALTER hits duplicate column on
+    # fresh DBs) doesn't skip a dependent CREATE INDEX that follows.
+    ("0004_niches_add_stable_key", """
+        ALTER TABLE niches ADD COLUMN stable_key TEXT;
+    """),
+    ("0004b_niches_stable_key_index", """
+        CREATE INDEX IF NOT EXISTS idx_niches_stable_key ON niches(stable_key);
+    """),
+    ("0005_verdicts_add_subject_fingerprint", """
+        ALTER TABLE verdicts ADD COLUMN subject_fingerprint TEXT;
+    """),
+    ("0005b_verdicts_add_snapshot_json", """
+        ALTER TABLE verdicts ADD COLUMN snapshot_json TEXT;
+    """),
+    ("0005c_verdicts_unique_index", """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_verdicts_unique
+            ON verdicts(subject_fingerprint, decision, date(decided_at));
+    """),
 ]
 
 
@@ -64,6 +83,7 @@ class Database:
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=5000")
         self._init_schema()
 
     def _init_schema(self):
@@ -268,8 +288,11 @@ class Database:
         return [dict(r) for r in cur.fetchall()]
 
     def get_pain_points_for_cluster(self, cluster_id: int) -> list[dict]:
+        # reddit_id is needed by Phase 5's compute_stable_key fingerprint;
+        # leave it on the SELECT so the NicheBuilder + rescore paths both
+        # see it without per-row backfill queries.
         cur = self.conn.execute(
-            """SELECT pp.*, p.title, p.body, p.subreddit, p.url,
+            """SELECT pp.*, p.reddit_id, p.title, p.body, p.subreddit, p.url,
                       p.score AS reddit_score, p.num_comments, p.created_utc
                FROM pain_points pp JOIN posts p ON pp.post_id = p.id
                WHERE pp.cluster_id = ?""",
@@ -283,17 +306,18 @@ class Database:
         self.conn.commit()
 
     def insert_niche(self, niche: dict) -> int:
-        # score_breakdown is optional (Phase 4 adds it; pre-Phase-4 callers
-        # may not pass it, in which case it lands as NULL).
+        # score_breakdown + stable_key are optional (older callers may not
+        # pass them, in which case they land as NULL).
         niche.setdefault("score_breakdown", None)
+        niche.setdefault("stable_key", None)
         cur = self.conn.execute(
             """INSERT INTO niches
                (label, description, post_count, cluster_count, sub_count,
                 complexity_score, revenue_score, rank_score, saturation_note,
-                first_seen, last_seen, centroid, score_breakdown)
+                first_seen, last_seen, centroid, score_breakdown, stable_key)
                VALUES (:label, :description, :post_count, :cluster_count, :sub_count,
                        :complexity_score, :revenue_score, :rank_score, :saturation_note,
-                       :first_seen, :last_seen, :centroid, :score_breakdown)""",
+                       :first_seen, :last_seen, :centroid, :score_breakdown, :stable_key)""",
             niche,
         )
         self.conn.commit()
@@ -302,23 +326,124 @@ class Database:
     def update_niche_scores(
         self, niche_id: int, label: str,
         complexity_score: float, revenue_score: float, rank_score: float,
-        score_breakdown: str,
+        score_breakdown: str, stable_key: str = None,
     ):
         """In-place rescore for `analyze --rescore-niches`. Leaves the niche's
-        cluster assignments + centroid + first_seen alone — only score fields
-        and the label move (since label is derived from facets too)."""
-        self.conn.execute(
-            """UPDATE niches SET
-                 label = ?,
-                 complexity_score = ?,
-                 revenue_score = ?,
-                 rank_score = ?,
-                 score_breakdown = ?
-               WHERE id = ?""",
-            (label, complexity_score, revenue_score, rank_score,
-             score_breakdown, niche_id),
+        cluster assignments + centroid + first_seen alone. stable_key is
+        recomputed (same input posts -> same fingerprint) but kept stable
+        when the underlying post set is unchanged."""
+        if stable_key is not None:
+            self.conn.execute(
+                """UPDATE niches SET
+                     label = ?, complexity_score = ?, revenue_score = ?,
+                     rank_score = ?, score_breakdown = ?, stable_key = ?
+                   WHERE id = ?""",
+                (label, complexity_score, revenue_score, rank_score,
+                 score_breakdown, stable_key, niche_id),
+            )
+        else:
+            self.conn.execute(
+                """UPDATE niches SET
+                     label = ?, complexity_score = ?, revenue_score = ?,
+                     rank_score = ?, score_breakdown = ?
+                   WHERE id = ?""",
+                (label, complexity_score, revenue_score, rank_score,
+                 score_breakdown, niche_id),
+            )
+        self.conn.commit()
+
+    # --- Verdicts (Phase 5) ---
+
+    def insert_verdict(self, verdict: dict) -> bool:
+        """INSERT OR IGNORE on (subject_fingerprint, decision, date(decided_at)).
+        Returns True if a new row landed, False if the day-bucket already
+        held the same decision (idempotent under digest-record replay)."""
+        verdict.setdefault("note", None)
+        verdict.setdefault("snapshot_json", None)
+        cur = self.conn.execute(
+            """INSERT OR IGNORE INTO verdicts
+               (subject_type, subject_label, subject_fingerprint,
+                decision, note, snapshot_json)
+               VALUES (:subject_type, :subject_label, :subject_fingerprint,
+                       :decision, :note, :snapshot_json)""",
+            verdict,
         )
         self.conn.commit()
+        return cur.rowcount > 0
+
+    def get_latest_verdict_for_fingerprint(self, fingerprint: str):
+        """Most recent verdict for a niche fingerprint, or None. 'Latest'
+        is decided_at DESC — newer decisions override older ones for the
+        purpose of digest filtering."""
+        if not fingerprint:
+            return None
+        cur = self.conn.execute(
+            """SELECT * FROM verdicts
+               WHERE subject_fingerprint = ?
+               ORDER BY decided_at DESC LIMIT 1""",
+            (fingerprint,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_build_centroids(self) -> list[dict]:
+        """For taste-learning: return centroids of niches the operator has
+        marked `build`. Joins by stable_key — if a build-verdict niche has
+        been re-niched and its fingerprint changed, it's correctly excluded
+        (the operator's taste was about that specific niche, not the new
+        one that re-clustered into a different shape)."""
+        cur = self.conn.execute(
+            """SELECT DISTINCT n.label, n.centroid, n.stable_key
+               FROM niches n
+               JOIN verdicts v ON v.subject_fingerprint = n.stable_key
+               WHERE v.decision = 'build'
+                 AND n.centroid IS NOT NULL
+                 AND n.stable_key IS NOT NULL"""
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_killed_fingerprints(self) -> set:
+        """All fingerprints with a current `kill` verdict. Returns a set
+        for O(1) lookup during digest filtering."""
+        cur = self.conn.execute(
+            """SELECT subject_fingerprint FROM verdicts
+               WHERE decision = 'kill'
+                 AND subject_fingerprint IS NOT NULL"""
+        )
+        return {r[0] for r in cur.fetchall()}
+
+    def get_watch_verdicts_with_snapshots(self) -> dict:
+        """fingerprint -> {snapshot_dict, decided_at} for niches the
+        operator wants to track over time. Used by the digest to render
+        growth deltas vs the watch moment."""
+        cur = self.conn.execute(
+            """SELECT subject_fingerprint, snapshot_json, decided_at
+               FROM verdicts
+               WHERE decision = 'watch'
+                 AND subject_fingerprint IS NOT NULL"""
+        )
+        result = {}
+        for r in cur.fetchall():
+            try:
+                snap = json.loads(r["snapshot_json"]) if r["snapshot_json"] else {}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                snap = {}
+            result[r["subject_fingerprint"]] = {
+                "snapshot": snap,
+                "decided_at": r["decided_at"],
+            }
+        return result
+
+    def get_verdict_summary(self) -> dict:
+        """Counts by decision for the digest header. Returns
+        {build: N, watch: N, kill: N, total: N}."""
+        result = {"build": 0, "watch": 0, "kill": 0, "total": 0}
+        for r in self.conn.execute(
+            "SELECT decision, COUNT(*) c FROM verdicts GROUP BY decision"
+        ):
+            result[r[0]] = r[1]
+            result["total"] += r[1]
+        return result
 
     def update_cluster_niche(self, cluster_id: int, niche_id: int):
         self.conn.execute(

@@ -458,6 +458,38 @@ COMPLEXITY_KEYWORDS = [
     "scale", "enterprise integration",
 ]
 
+# ---------------------------------------------------------------------------
+# Phase 5 — verdict capture, taste-learning, saturation display
+# Knobs for the build/watch/kill feedback loop, the cosine-based taste
+# boost applied to niches similar to past `build` verdicts, and the
+# growth-delta highlighting on `watch`-marked niches. Saturation ships
+# as display-only (no threshold knob — the operator's eyes do the heavy
+# /light judgment).
+# ---------------------------------------------------------------------------
+
+# Cosine similarity threshold to trigger a taste-boost on a niche. Above
+# this against any prior `build`-verdict centroid, the niche gets
+# rank * TASTE_BOOST_MULTIPLIER. 0.70 is conservative — only strongly-
+# similar niches boost; 0.50 would surface looser matches.
+TASTE_SIM_THRESHOLD = 0.70
+
+# Multiplier applied to rank_score when taste-boost activates. 1.20 is a
+# gentle nudge (a build-similar niche jumps roughly one rank position);
+# 1.5+ starts to dominate the digest ordering.
+TASTE_BOOST_MULTIPLIER = 1.20
+
+# Don't activate taste-boost until at least this many build verdicts
+# exist. N=1 is pure operator-bias amplification (one click pins all
+# future digests); N=2 is the minimum for "this is a pattern, not a
+# one-off." When N==1, the digest header shows a hint instead.
+TASTE_MIN_BUILD_VERDICTS = 2
+
+# Watched niche growth highlight threshold (fraction). When post_count
+# or facet_count grew by this much since the watch verdict snapshot,
+# the digest emphasizes the watched row. Below this, the delta is shown
+# as plain text without emphasis.
+WATCH_GROWTH_HIGHLIGHT_PCT = 0.20
+
 # Profile overlays — selected via `--profile` CLI flag on export
 PROFILES = {
     "lienclear": {

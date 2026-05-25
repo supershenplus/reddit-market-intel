@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS niches (
     first_seen TEXT,
     last_seen TEXT,
     centroid BLOB,
-    score_breakdown TEXT
+    score_breakdown TEXT,
+    stable_key TEXT
 );
 
 -- Operator verdicts captured by triage workflow (Phase 5). Stubbed in Phase 1
@@ -87,9 +88,11 @@ CREATE TABLE IF NOT EXISTS verdicts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     subject_type TEXT NOT NULL,
     subject_label TEXT NOT NULL,
+    subject_fingerprint TEXT,
     decision TEXT NOT NULL,
     decided_at TEXT DEFAULT (datetime('now')),
-    note TEXT
+    note TEXT,
+    snapshot_json TEXT
 );
 
 -- Migration ledger replaces the ALTER-with-exception-catch pattern in
@@ -153,3 +156,6 @@ CREATE INDEX IF NOT EXISTS idx_verdicts_subject ON verdicts(subject_type, subjec
 CREATE INDEX IF NOT EXISTS idx_facets_post ON pain_facets(post_id);
 CREATE INDEX IF NOT EXISTS idx_facets_domain ON pain_facets(domain);
 CREATE INDEX IF NOT EXISTS idx_facets_wtp ON pain_facets(willingness_to_pay);
+-- idx_niches_stable_key + idx_verdicts_unique live in db.py MIGRATIONS
+-- (depend on columns added via ALTER for pre-Phase-5 DBs; can't be
+-- expressed here since schema.sql runs before the migration ledger).

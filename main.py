@@ -526,7 +526,12 @@ def delta(baseline, output):
     "--n-niches", default=15, show_default=True,
     help="Niche count for k-means meta-clustering",
 )
-def digest(top, output, n_niches):
+@click.option(
+    "--include-killed", is_flag=True, default=False,
+    help="Phase 5 — include niches you've marked `kill` in past verdicts "
+    "(hidden by default).",
+)
+def digest(top, output, n_niches, include_killed):
     """Build niches from clusters and emit the weekly markdown digest (Phase 1)."""
     db = Database()
     console.print(f"[bold]Meta-clustering into {n_niches} niches via k-means on cluster centroids...[/bold]")
@@ -540,7 +545,7 @@ def digest(top, output, n_niches):
         db.close()
         return
 
-    writer = DigestWriter(db)
+    writer = DigestWriter(db, include_killed=include_killed)
     md = writer.generate(top_n=top)
 
     if output is None:
@@ -688,6 +693,84 @@ def llm_extract(batch_size, max_posts, prefilter, re_extract):
         f"  3. When done, run: [cyan]python main.py llm-import {output_dir}[/cyan]\n"
     )
     db.close()
+
+
+@cli.command("digest-record")
+@click.argument("digest_file", type=click.Path(exists=True, dir_okay=False))
+def digest_record(digest_file):
+    """Phase 5 — parse build/watch/kill checkboxes from an edited digest,
+    persist to the verdicts table. Idempotent: re-running on the same file
+    is a no-op. Watched niches get a state snapshot at verdict time so
+    future digests can render growth deltas."""
+    from analysis.verdict_parser import parse_digest, FormatMismatch
+
+    db = Database()
+    content = Path(digest_file).read_text(encoding="utf-8")
+    try:
+        verdicts = parse_digest(content)
+    except FormatMismatch as e:
+        console.print(f"[red]Refused: {e}[/red]")
+        db.close()
+        raise click.exceptions.Exit(code=1)
+
+    warnings = getattr(parse_digest, "last_warnings", [])
+    for w in warnings:
+        console.print(f"[yellow]warn: {w}[/yellow]")
+
+    new_count = 0
+    ignored_count = 0
+    for v in verdicts:
+        # For watch verdicts, snapshot the niche's current state so growth
+        # deltas can be rendered in future digests.
+        if v["decision"] == "watch":
+            snap = _snapshot_niche(db, v["subject_fingerprint"])
+            v["snapshot_json"] = json.dumps(snap) if snap else None
+        inserted = db.insert_verdict(v)
+        if inserted:
+            new_count += 1
+        else:
+            ignored_count += 1
+
+    console.print(
+        f"[bold green]{new_count} new verdicts recorded "
+        f"({ignored_count} ignored as same-day duplicates).[/bold green]"
+    )
+    if new_count > 0:
+        console.print(
+            "[dim]Run `python main.py digest` again to see verdict effects.[/dim]"
+        )
+    db.close()
+
+
+def _snapshot_niche(db: Database, fingerprint: str) -> dict:
+    """Snapshot a niche's current state for watch-delta tracking."""
+    if not fingerprint:
+        return {}
+    row = db.conn.execute(
+        "SELECT * FROM niches WHERE stable_key = ?", (fingerprint,),
+    ).fetchone()
+    if not row:
+        return {}
+    niche = dict(row)
+    # Count current facets in this niche's clusters.
+    from config import LLM_PROMPT_VERSION
+    facet_count = db.conn.execute(
+        """SELECT COUNT(*) FROM pain_facets pf
+           JOIN pain_points pp ON pp.post_id = pf.post_id
+           JOIN clusters c ON c.id = pp.cluster_id
+           WHERE c.niche_id = ?
+             AND pf.prompt_version = ?
+             AND pf.is_pain_point = 1""",
+        (niche["id"], LLM_PROMPT_VERSION),
+    ).fetchone()[0]
+    return {
+        "rank_score": niche.get("rank_score"),
+        "revenue_score": niche.get("revenue_score"),
+        "complexity_score": niche.get("complexity_score"),
+        "post_count": niche.get("post_count"),
+        "facet_count": facet_count,
+        "snapshotted_at": __import__("datetime").datetime.now().isoformat(),
+    }
 
 
 @cli.command()

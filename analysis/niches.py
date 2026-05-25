@@ -6,6 +6,7 @@ so the shape of the digest is correct before signal quality work happens in
 Phase 3/4.
 """
 
+import hashlib
 import json
 from datetime import datetime
 
@@ -16,6 +17,34 @@ from sentence_transformers import SentenceTransformer
 from analysis.niche_scorer import best_label_facet, score_niche
 from config import EMBEDDING_MODEL, LLM_PROMPT_VERSION
 from storage.db import Database
+
+
+STABLE_KEY_TOP_N = 10  # Posts to fingerprint per niche; tradeoff between
+                       # stability under small drift and sensitivity to
+                       # genuine niche-shape changes.
+
+
+def compute_stable_key(clusters_with_members: list[tuple[dict, list[dict]]]) -> str:
+    """sha1 of top-N member reddit_ids, ordered by (cluster.post_count DESC,
+    reddit_id ASC). Members from larger clusters in the niche dominate the
+    fingerprint so a small leaf cluster shifting doesn't invalidate verdicts.
+
+    clusters_with_members: list of (cluster_row, [pain_point_rows]).
+    """
+    candidates = []
+    for cluster, members in clusters_with_members:
+        weight = cluster.get("post_count") or 0
+        for m in members:
+            rid = m.get("reddit_id") or m.get("post_reddit_id") or ""
+            if rid:
+                candidates.append((weight, rid))
+    if not candidates:
+        return ""
+    # Sort by weight DESC, then reddit_id ASC — fully deterministic.
+    candidates.sort(key=lambda t: (-t[0], t[1]))
+    top = [rid for _, rid in candidates[:STABLE_KEY_TOP_N]]
+    payload = "|".join(sorted(top))  # sort the slice too, for canonical form
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
 DEFAULT_N_NICHES = 15
@@ -103,6 +132,10 @@ class NicheBuilder:
         post_count = sum(c["post_count"] or 0 for c in all_clusters)
         subreddits = {p["subreddit"] for p in all_pps if p.get("subreddit")}
 
+        # Phase 5 — stable identity for verdict matching; survives re-niching
+        # when underlying member set is broadly preserved.
+        stable_key = compute_stable_key(members)
+
         # Phase 4 — gather facets across all clusters in this niche.
         all_facets = []
         for c in all_clusters:
@@ -143,6 +176,7 @@ class NicheBuilder:
             "last_seen": last_seen,
             "centroid": centroid_vec.astype(np.float32).tobytes(),
             "score_breakdown": json.dumps(breakdown),
+            "stable_key": stable_key,
         })
         for c in all_clusters:
             self.db.update_cluster_niche(c["id"], niche_id)
@@ -161,14 +195,28 @@ def rescore_existing_niches(db: Database) -> dict:
     fallback = 0
     for niche in niches:
         clusters = db.get_clusters_for_niche(niche["id"])
+        # Phase 5: rebuild the (cluster, members) shape so compute_stable_key
+        # can fingerprint the niche. Member posts need reddit_id for the hash,
+        # which get_pain_points_for_cluster already joins in via posts.url
+        # alias; we need the reddit_id explicitly so a small inline query.
+        members_per_cluster = []
         all_pps = []
         all_facets = []
         for c in clusters:
             pps = db.get_pain_points_for_cluster(c["id"])
+            # Backfill reddit_id onto each pp dict for the fingerprint pass.
+            for pp in pps:
+                if "reddit_id" not in pp:
+                    row = db.conn.execute(
+                        "SELECT reddit_id FROM posts WHERE id = ?", (pp["post_id"],),
+                    ).fetchone()
+                    pp["reddit_id"] = row[0] if row else ""
+            members_per_cluster.append((c, pps))
             all_pps.extend(pps)
             all_facets.extend(
                 db.get_facets_for_cluster_at_version(c["id"], LLM_PROMPT_VERSION)
             )
+        stable_key = compute_stable_key(members_per_cluster)
         post_count = sum((c["post_count"] or 0) for c in clusters)
         opp_scores = [p["opportunity_score"] for p in all_pps if p.get("opportunity_score")]
         fallback_avg = sum(opp_scores) / len(opp_scores) if opp_scores else 0.0
@@ -185,7 +233,8 @@ def rescore_existing_niches(db: Database) -> dict:
                 if ranked else niche["label"]
             )
         db.update_niche_scores(
-            niche["id"], label, complexity, revenue, rank, json.dumps(breakdown),
+            niche["id"], label, complexity, revenue, rank,
+            json.dumps(breakdown), stable_key=stable_key,
         )
         if mode == "faceted":
             faceted += 1
