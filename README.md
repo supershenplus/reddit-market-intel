@@ -1,6 +1,6 @@
 # Reddit Market Intelligence
 
-A personal market-gap discovery engine. Scrapes ~100 subreddits across 12 verticals, extracts user pain points via RAG + LLM, clusters them, and emits a ranked weekly markdown digest skim-able in one sitting. Designed for an audience of one — solo operator hunting for SaaS opportunities.
+A personal market-gap discovery engine. Scrapes ~100 subreddits across 12 verticals, extracts user pain points via RAG + LLM, clusters them into niches, scores those niches on revenue/complexity from extracted facets, and emits a ranked weekly markdown digest with build/watch/kill checkboxes. Verdicts feed back into ranking (taste-learning). Designed for an audience of one — solo operator hunting for SaaS opportunities. State as of 2026-05-25: 1,398 v0.1 facets across 4.7% coverage; first actionable niche is PM-software OPS-view gap (Doorloop/Buildium/AppFolio; WTP 71%; in validation, not build).
 
 ## Pipeline
 
@@ -52,7 +52,8 @@ python main.py digest
 | `llm-extract` | Phase 3 driver — export batches + print operator handoff |
 | `llm-export` | Just write batch files (scriptable primitive) |
 | `llm-import <dir>` | Validate manifest + UPSERT facets into pain_facets |
-| `digest` | Build niches + emit weekly markdown digest (`reports/weekly/<date>.md`) |
+| `digest` | Build niches + emit weekly markdown digest with verdict checkboxes (`reports/weekly/<date>.md`) |
+| `digest-record` | Parse filled-in digest checkboxes back into the `verdicts` table; feeds taste-learning + watch-delta tracking |
 | `export` | Per-cluster opportunity report (legacy; pre-pivot) |
 | `snapshot` / `delta` | Track cluster movement week-over-week |
 | `status` | DB counts and top clusters |
@@ -253,8 +254,9 @@ python main.py digest
 | 2 | shipped | Broaden corpus from 5 categories → 12-vertical / ~100 subs |
 | 3 | shipped | LLM batch-mode facet extraction + digest veto |
 | 3.5 | deferred | API mode (Anthropic SDK + cost tracking + circuit breakers) |
-| 4 | next | Real `complexity_score` + `revenue_score` from facets |
-| 5 | next | Verdict capture + taste-learning + corpus-internal saturation (W7-1) |
+| 4 | shipped | Facet-driven `complexity_score` + `revenue_score` (uncalibrated v0 weights) |
+| 5 | shipped | Verdict capture + taste-learning + corpus-internal saturation display |
+| **Now** | validate | DM outreach on Niche #1 (PM software OPS-view gap) — confirm pain before any build |
 
 See `DECISIONS.md` for the architectural choices behind each phase.
 
