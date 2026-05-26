@@ -358,7 +358,28 @@ LLM_DEFAULT_MODE = "batch"
 # circuit breaker — prevents a runaway re-extract after a prompt-version
 # bump from blasting through the whole corpus unintentionally. Raise via
 # --max-posts when you genuinely want a backfill.
-LLM_MAX_POSTS_PER_RUN = 500
+LLM_MAX_POSTS_PER_RUN = 1000
+
+# Subs excluded from LLM extraction. Tuned from v0.1 backfill yield data:
+# these subs produced 0% pain-rate (trade-photo/meme/career posts dominate)
+# OR <10% pain-rate (SideProject is mostly "look at my project" promo).
+# Posts from these subs still land in the posts table + clustering pipeline;
+# only the LLM-extraction step skips them so we don't burn batch slots.
+LLM_PREFILTER_SKIP_SUBS = {
+    "Flooring", "Concrete", "estimators", "Carpentry", "Welding",
+    "Plumbing", "HVAC", "Roofing", "electricians", "Painting",
+    "SideProject",
+}
+
+# Per-sub caps to force diversity in the LLM extraction pool. Subs not
+# listed have no cap. Tuned from v0.1 yield data — smallbusiness was 100/500
+# at 20% and Contractor was 64/500 at 31%, both over-represented relative
+# to higher-yield subs (ecommerce, productivity, Entrepreneur) starving for
+# slots.
+LLM_PREFILTER_SUB_CAPS = {
+    "smallbusiness": 50,
+    "Contractor": 50,
+}
 
 # Soft dollar ceiling for `--mode api` runs only (batch mode is $0 marginal).
 # Computed against per-call usage from the Anthropic response. Hitting it

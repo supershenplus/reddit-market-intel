@@ -25,6 +25,8 @@ from config import (
     LLM_BATCH_DIR,
     LLM_BATCH_SIZE,
     LLM_MAX_POSTS_PER_RUN,
+    LLM_PREFILTER_SKIP_SUBS,
+    LLM_PREFILTER_SUB_CAPS,
     LLM_PROMPT_VERSION,
 )
 from storage.db import Database
@@ -161,6 +163,8 @@ def select_posts(
 
     rag_pass, rag_fail = [], []
     for p in candidates:
+        if p["subreddit"] in LLM_PREFILTER_SKIP_SUBS:
+            continue  # zero/near-zero yield subs — don't even RAG-classify
         if rag_classifier.classify(p["title"] or "", p["body"] or "") is not None:
             p["_prefilter"] = "rag_pass"
             rag_pass.append(p)
@@ -169,7 +173,7 @@ def select_posts(
             rag_fail.append(p)
 
     if prefilter == "strict":
-        return rag_pass[:max_posts]
+        return _apply_sub_caps(rag_pass, max_posts)
 
     # sampled mode: rag_pass + a slice of rag_fail for recall audit
     rng = random.Random(42)
@@ -178,7 +182,23 @@ def select_posts(
     sampled = rng.sample(rag_fail, sample_size) if sample_size > 0 else []
     combined = rag_pass + sampled
     rng.shuffle(combined)
-    return combined[:max_posts]
+    return _apply_sub_caps(combined, max_posts)
+
+
+def _apply_sub_caps(posts: list[dict], max_posts: int) -> list[dict]:
+    """Cap per-subreddit contribution per LLM_PREFILTER_SUB_CAPS, then slice
+    to max_posts. Preserves input order so RAG-similarity ranking still
+    decides which posts within an over-represented sub get kept."""
+    counts: dict[str, int] = {}
+    capped: list[dict] = []
+    for p in posts:
+        sub = p.get("subreddit", "")
+        cap = LLM_PREFILTER_SUB_CAPS.get(sub)
+        if cap is not None and counts.get(sub, 0) >= cap:
+            continue
+        counts[sub] = counts.get(sub, 0) + 1
+        capped.append(p)
+    return capped[:max_posts]
 
 
 def _tag_and_cap(posts: list[dict], source: str, max_posts: int) -> list[dict]:
