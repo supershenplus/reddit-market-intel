@@ -131,7 +131,7 @@
 
 - [ ] **PIPE-3 (non-atomic exports)** — `main.py:408, 439, 465, 514, 555` all use `Path(output).write_text(report)`. Ctrl-C or disk-full mid-write leaves a truncated file; `digest-record` then trips `FormatMismatch` (`analysis/verdict_parser.py:64`) and the operator's marking work is lost. Fix: write `<path>.tmp` then `os.replace(<path>.tmp, <path>)`. Severity: critical (data loss).
 
-- [ ] **SEC-1 (data/ not gitignored)** — `.gitignore` excludes only the `.db` file specifically, not the `data/` directory. Scraped post bodies live under `data/llm_batches/<ts>/batch_NNN.md` and `data/lienclear_competitor_gaps.md`. A single `git add data/` (or `git add .` from project root) commits raw scraped Reddit content to public-repo history. Fix: add `data/` to `.gitignore`, explicitly re-allow anything intentionally versioned. Severity: critical (PII / Reddit-ToS leak risk).
+- [x] **SEC-1 (data/ not gitignored)** — Closed 2026-05-25 in same session: broadened `.gitignore:1` from `data/market_intel.db` → `data/`. Verified no tracked files under `data/` (so no `git rm --cached` needed). All batch files, snapshots, competitor-gap exports now blocked from accidental staging. Severity: critical (closed).
 
 ### Warning (codebase review, 2026-05-25)
 

@@ -1,4 +1,4 @@
-data/market_intel.db
+data/
 __pycache__/
 *.pyc
 *.pyo
