@@ -47,4 +47,18 @@ INTENT_PRIORITY = {
     "seeking_tool": 3,
     "frustrated": 2,
     "feature_request": 1,
+    # Noise categories sit at 0 so the priority-margin tiebreak in
+    # rag_classifier.classify() always prefers a real pain category when
+    # both fire on the same post. A noise-only match short-circuits to
+    # None at the end of classify() — see NOISE_CATEGORIES below.
+    "noise_career": 0,
+    "noise_support": 0,
+    "noise_observer": 0,
 }
+
+# Categories that mean "this post is on-topic for RAG seeds but is not a
+# pain-point opportunity." Used by RAGClassifier.classify() to early-return
+# None when the winning category is one of these. Keeps the LLM prefilter
+# from burning batch slots on career posts, tenant/landlord legal Qs, and
+# agency-observer manifestos that LLM veto would catch anyway.
+NOISE_CATEGORIES = frozenset({"noise_career", "noise_support", "noise_observer"})

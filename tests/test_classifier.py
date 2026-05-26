@@ -92,3 +92,58 @@ class TestClassifierOutput:
         )
         assert result is not None
         assert result["intent_category"] == "would_pay"
+
+
+class TestClassifierNoiseRejection:
+    """Prefilter v2 — noise categories should classify as None at the RAG
+    layer. Career posts, tenant/landlord legal Qs, and agency-observer
+    manifestos used to slip through the LLM prefilter and burn batch slots.
+    Tests use PainPointClassifier (RAG + regex fallback); chosen phrasings
+    don't hit the narrow regex fallback either, so None is the expected
+    end-to-end output."""
+
+    def test_career_post_rejected(self, clf):
+        result = clf.classify(
+            "What's everybody's career path and what are we all making?",
+            "Share your age, location, and years in the industry/your trade.",
+        )
+        assert result is None
+
+    def test_career_job_offer_rejected(self, clf):
+        result = clf.classify(
+            "Should I take this job offer or stay where I am?",
+            "Considering a switch but not sure if the pay bump is worth it.",
+        )
+        assert result is None
+
+    def test_tenant_legal_question_rejected(self, clf):
+        result = clf.classify(
+            "Can I evict a tenant for not paying rent on time?",
+            "What are the legal steps in my state to start the eviction process?",
+        )
+        assert result is None
+
+    def test_lease_clause_question_rejected(self, clf):
+        result = clf.classify(
+            "Is this clause in my lease actually legal?",
+            "My landlord added a fee for late payment that seems excessive.",
+        )
+        assert result is None
+
+    def test_agency_observer_manifesto_rejected(self, clf):
+        result = clf.classify(
+            "I work with hundreds of SaaS founders and the biggest issue I see is X",
+            "Most of my clients struggle with this exact thing every single week at our agency.",
+        )
+        assert result is None
+
+    def test_pain_with_noise_overlap_pain_wins(self, clf):
+        # Mixes a career-noise phrase ("considering this as a career") with a
+        # would_pay pain phrase. Priority tiebreak (would_pay=5 > noise=0) means
+        # the post is correctly classified as pain, not rejected as noise.
+        result = clf.classify(
+            "Considering this as a career — I'd gladly pay for a tool that automates onboarding",
+            "",
+        )
+        assert result is not None
+        assert result["intent_category"] in {"would_pay", "seeking_tool"}

@@ -7,7 +7,7 @@ import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 
-from analysis.keywords import INTENT_PRIORITY
+from analysis.keywords import INTENT_PRIORITY, NOISE_CATEGORIES
 from config import CHROMA_PATH, EMBEDDING_MODEL, SIMILARITY_THRESHOLD
 
 COLLECTION_NAME = "pain_point_seeds"
@@ -90,6 +90,35 @@ SEEDS: dict[str, list[str]] = {
         "I don't need half of what they're selling me",
         "Procore has way too much we don't need, just want lien waivers and pay apps",
         "Don't need the full construction management suite, just billing",
+    ],
+    # ----- Noise categories (Prefilter v2) ----------------------------------
+    # These cause classify() to return None when they win the priority tiebreak.
+    # A pain seed that also fires on the same post still wins (priority > 0).
+    "noise_career": [
+        "Should I take this job offer or stay where I am?",
+        "Is a college degree worth it for this trade?",
+        "How much do you make as a project manager?",
+        "What's your career path and how did you get into this industry?",
+        "Thinking about going to trade school, is it worth it?",
+        "What's everybody's career and what are we making? Share age, location, years",
+        "How do I break into property management as a career?",
+    ],
+    "noise_support": [
+        "Can I evict a tenant for not paying rent?",
+        "Is this clause in my lease actually legal?",
+        "Tenant won't leave after I served notice, what are my options?",
+        "Security deposit dispute, what are my rights as a landlord?",
+        "Can my landlord raise the rent this much in one year?",
+        "Is it legal for my landlord to enter the unit without notice?",
+        "How do I handle a hostile tenant who keeps complaining?",
+    ],
+    "noise_observer": [
+        "I work with hundreds of agencies and the biggest issue I see is X",
+        "Most of my clients struggle with this exact thing every week",
+        "When I consult with SaaS founders they all say the same problem",
+        "We help our clients solve this every day at our agency",
+        "Founders I work with constantly complain about this gap",
+        "From my experience working with B2B teams, the real gap is Z",
     ],
 }
 
@@ -190,6 +219,13 @@ class RAGClassifier:
             candidates,
             key=lambda sc: (INTENT_PRIORITY.get(sc[1], 0), sc[0]),
         )[1]
+
+        # Prefilter v2: noise-only matches return None. A pain seed firing on
+        # the same post wins the priority tiebreak (pain priorities are 1-5;
+        # noise sits at 0), so borderline pain+noise overlaps still classify.
+        if primary_category in NOISE_CATEGORIES:
+            return None
+
         top_similarity = max(s for s, c in candidates if c == primary_category)
 
         # Sentiment intensity: normalize top similarity to [0, 1] relative to threshold
