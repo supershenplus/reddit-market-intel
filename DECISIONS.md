@@ -282,3 +282,36 @@ floor — MaxKmet, kzeitar, iamvs2002). Agent 3 (PM market landscape: red ocean
 verdict, 450+ products on Capterra) calibrated the verdict expectation.
 
 **Supersedes:** 2026-05-25 "saturation ships display-only with no threshold."
+
+## 2026-05-28: Lienclear Phase 2 build paused; compliance moat is the surviving wedge
+
+**Choice:** Pause F5/F6/F7 (paid AIA pay-app + change-order core) build scope. Run 10-15 buyer-side
+(owner/controller) cold conversations this week before any further build planning. Re-anchor wedge
+positioning from "transparent per-action pricing vs Procore" to "get paid faster under California
+SB 440" (compliance moat). Kill criterion: 60 days (2026-07-27) with zero owner-side paid pilots →
+kill thesis and pivot to a new RIM-discovered niche (using now-better-tuned W4-1 + W4-8 scoring).
+Ship W4-8 (price-anchor signal) in parallel — would have flagged the LienWaiver.pro $49 collision
+earlier.
+
+**Why:** 3 research agents fanning out in parallel (strategic options + market reality + adversarial)
+converged on VALIDATE-FIRST. Specific evidence: (a) LienWaiver.pro launched 2026-02-18 at $49/mo
+flat, 50-state coverage — commoditizing the bottom-tier wedge; (b) Built Payments went free in
+Oct 2025 with lien-waiver workflow bundled — commoditizing the workflow layer to $0; (c) Siteline
+stalled at $4.7M ARR for 4 years (no Series B since Feb 2022) — bullish on cohort underservice
+but bearish on category VC and on whether the cohort can monetize at SaaS prices; (d) all 41
+source pain-point facets are sub/operator-side, hitting [[feedback-construction-buyer-operator-split]]
+head-on; (e) F5 G702/G703 generator engineering scope (SOV math, retainage, AIA form licensing
+risk) is 4-6 months solo, not a paper MVP; (f) headline launch math requires ~165 paying customers
+for $14K/mo target vs realistic year-1 SOM of 75-150. The compliance moat (state-correct NOI +
+SB 440 24% interest on undisputed change-orders + 3x-damages exposure) survives all four
+competitor moves and is the only differentiation left standing. Surfacing in Phase 1 (F1-F4) only.
+
+**Rejected:** (i) Refine feature list with another LLM batch — diminishing returns, doesn't
+answer "do owners pay?". (ii) Ship F5+F6+F7 paper MVP and validate via DM — validates desire
+not WTP because buyer/operator split contaminates operator responses. (iii) Continue building
+to ship before market shifts further — bet against concrete evidence that the wedge already
+shifted under the thesis. (iv) Kill outright — premature; compliance moat is real and the 60-day
+buyer-side test is cheap relative to its information value.
+
+**Supersedes pricing pitch in [[lienclear-v3-thesis]]** — the $49/$149/$349 structure can stay
+as packaging but is no longer the primary positioning differentiator.
