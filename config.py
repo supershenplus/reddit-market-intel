@@ -89,6 +89,10 @@ SEED_SUBREDDITS = {
         "managers", "Leadership", "AskManagers",
         "middlemanagement", "EngineeringManagers", "humanresources",
     ],
+    "gaming": [
+        "forza", "ForzaHorizon", "forzahorizon6", "forzahorizon5",
+        "ForzaMotorsport", "forzahorizon4", "simracing",
+    ],
 }
 
 # Scoring weights (must sum to 1.0)
@@ -511,6 +515,217 @@ TASTE_MIN_BUILD_VERDICTS = 2
 # as plain text without emphasis.
 WATCH_GROWTH_HIGHLIGHT_PCT = 0.20
 
+# ---------------------------------------------------------------------------
+# Gaming pivot — companion-tool discovery for game communities.
+# Monetization model: free-with-ads OR micro-subs ($1-3/mo), NOT paid app
+# sales. Audience reach (subreddit subscriber scale) replaces per-user WTP
+# as the viability proxy. "should be free" is NOT a negative signal under
+# this model — only "publisher should add this" (GAMING_KILL_PATTERNS)
+# kills it. Per-game profiles compose these patterns with game-specific
+# domain blocks (see FORZA_* below).
+# ---------------------------------------------------------------------------
+
+# Game-agnostic tool-request intent. Primary signal under the ad model —
+# every "is there a tool for X" view is a future page-view on the tool we
+# ship. Patterns allow 0-3 modifier words between the article and the
+# tool-type noun ("a tune calculator", "a livery library site") since
+# gaming asks rarely use bare nouns.
+GAMING_TOOL_REQUEST_PATTERNS = [
+    r"\banyone (?:made|built|know of|aware of|got|seen) (?:an? |the )?(?:\w+\s+){0,3}(?:app|site|tool|calculator|tracker|spreadsheet|sheet|website|bot|database|wiki)\b",
+    r"\bis there (?:an? |the |any )?(?:\w+\s+){0,3}(?:app|tool|website|site|calculator|tracker|spreadsheet|sheet|bot|database|wiki)\b",
+    r"\bwish (?:someone|there was|we had|i had) (?:would (?:make|build) )?(?:an? |the )?(?:\w+\s+){0,3}(?:app|tool|site|calculator|tracker|spreadsheet|sheet|bot)\b",
+    r"\bwe need (?:an? |the )?(?:\w+\s+){0,3}(?:tool|app|site|calculator|tracker|bot|database)\b",
+    r"\bdoes (?:anyone know of|a tool exist|an app exist|a site exist)\b",
+    r"\bwhere(?:'s| is) the (?:\w+\s+){0,3}(?:app|tool|site|calculator|tracker|spreadsheet|sheet|database)\b",
+    r"\bsomeone (?:should|please|needs to) (?:make|build|create) (?:a |an |the )?(?:\w+\s+){0,3}(?:tool|app|site|calculator|tracker|bot|database)\b",
+    r"\b(?:looking for|need) (?:an? |the )?(?:\w+\s+){0,3}(?:app|tool|site|calculator|tracker|spreadsheet|database)\b",
+]
+
+# DIY workaround — strongest conviction signal. Someone who built a
+# spreadsheet will gladly use a free ad-supported web version. Mirrors
+# the LIENCLEAR_DIY_PATTERNS playbook.
+GAMING_DIY_PATTERNS = [
+    r"\bI (?:made|built|created|coded|wrote|set up) (?:a |my own |an? )?(?:spreadsheet|google sheet|discord bot|website|app|tool|tracker|calculator)\b",
+    r"\bwe (?:made|built|created|coded|wrote) (?:a |our own )?(?:spreadsheet|google sheet|discord bot|website|app|tool|tracker|calculator)\b",
+    r"\bbuilt my own (?:tool|tracker|calculator|sheet|spreadsheet|app)\b",
+    r"\bhacked together (?:a |an? )?(?:sheet|bot|tool|script)\b",
+    r"\bin (?:Excel|Google Sheets?|a spreadsheet|Notion)\b",
+    r"\bmy (?:spreadsheet|google sheet|tracker|calculator) for\b",
+]
+
+# Bonus micro-sub viability hints. NOT a gate — most gaming tools never
+# see one of these and still monetize fine via ads. Applies as a small
+# multiplier on the final relevance score.
+GAMING_PATREON_PATTERNS = [
+    r"\bsupport the dev(?:eloper)?\b",
+    r"\bPatreon\b",
+    r"\bko-?fi\b",
+    r"\bbuy me a coffee\b",
+    r"\btip jar\b",
+    r"\bdonat(?:e|ion)\b",
+    r"\$\s*(?:1|2|3|5)\s*(?:/mo|/month|per month|a month)\b",
+]
+
+# Kill the opportunity: post wants the publisher to build it, not the
+# market. Narrowly scoped — does NOT include generic "free please"
+# complaints (those are compatible with the ad-revenue model).
+GAMING_KILL_PATTERNS = [
+    r"\bshould be in (?:the )?(?:base )?game\b",
+    r"\b(?:Microsoft|Playground|Turn\s?10|Sony|Bethesda|Capcom|Activision|Ubisoft|EA|Bungie|Arrowhead) should add\b",
+    r"\bdevs (?:need to|should) add\b",
+    r"\bbase game (?:should|needs to) (?:include|have)\b",
+    r"\bwhy isn'?t this in the game\b",
+]
+
+GAMING_URGENCY_PATTERNS = [
+    r"\bsince the (?:update|patch|launch|drop|release)\b",
+    r"\bpost[- ]launch\b",
+    r"\bbefore (?:season|event|playlist) ends\b",
+    r"\bthis (?:season|playlist|week)\b",
+    r"\bFOMO\b",
+    r"\bweekly (?:reset|playlist|rotation)\b",
+]
+
+# Relevance score weights (sum = 1.0). Note `audience_reach` replaces the
+# B2B-pipeline `monetization` slot — under the ad model, reach IS the
+# viability signal. Patreon and kill patterns modify the score via
+# multiplier, not a weighted component.
+GAMING_RELEVANCE_WEIGHTS = {
+    "tool_request":   0.40,
+    "diy_evidence":   0.25,
+    "audience_reach": 0.20,
+    "domain_hit":     0.15,
+}
+
+# Reach ceiling — recalibrated for gaming-sub scale (vs B2B 10M ceiling).
+# r/forzahorizon5 ~150K, r/Helldivers ~700K, r/leagueoflegends ~7M.
+# Reach-score = min(1.0, subscribers / ceiling).
+GAMING_AUDIENCE_REACH_CEILING = 500_000
+
+# Multipliers applied AFTER weighted score sum
+GAMING_PATREON_MULTIPLIER = 1.10   # bonus when WTP-via-tip signal present
+GAMING_KILL_MULTIPLIER    = 0.4    # demand pointed at publisher, not market
+
+# ---------------------------------------------------------------------------
+# Forza profile — first game-specific gaming overlay
+# Triggered by new Forza launch 2026-05-19. Domain: tuning, livery, online,
+# progression. Pattern parallel to LIENCLEAR_* — copy this block when
+# adding Helldivers / Marvel Rivals / etc.
+# ---------------------------------------------------------------------------
+
+FORZA_DOMAIN_KEYWORDS = [
+    # Game name anchors — strongest signal a post is on-topic
+    r"\bForza\b", r"\bFH[456]\b",
+    r"\bforza horizon\b", r"\bforza motorsport\b",
+    # Forza-specific class system — only S1/S2/X are Forza-exclusive.
+    # `class A` / `class B` / `class C` leak into real estate (property class),
+    # construction (building grade), networking (IP class), etc. They're
+    # legitimate Forza vocab too but the false-positive risk dominates;
+    # legitimate Forza posts will hit other patterns (\bForza\b, \bFH[456]\b).
+    r"\bclass S[12]\b", r"\bclass X\b",
+    # PI ratings — only match when anchored to a tune/build/setup bigram.
+    r"\b(?:tune|build|setup|spec)\s+(?:for|at|on|@)\s+(?:[ABCDE]|S[12]|X)\s?\d{3}\b",
+    # Sim-rig + FFB — narrow enough to be Forza/sim-racing exclusive
+    r"\bFFB\b", r"\bforce feedback\b", r"\bwheelbase\b",
+    r"\bFanatec\b", r"\bMoza\b",
+    r"\bdeadzone\b", r"\bsensitivity curve\b",
+    # Tuning vocabulary — bigrams only (bare "tune" too leaky into business
+    # / piano-tuner / fine-tuning false positives)
+    r"\btune (?:for|sheet|file|setup|guide|code|calculator|share|trade)\b",
+    r"\b(?:share|trade|swap|find|drop|sell|sharing|trading) (?:my )?tunes?\b",
+    r"\btuning (?:guide|sheet|tool|app|calculator|setup|file|app|spreadsheet)\b",
+    r"\bgear ratios? (?:for|of|setup)\b",
+    r"\bbrake bias\b",
+    r"\bdyno (?:tune|run|sheet|chart)\b",
+    # Cosmetic — bigrams
+    r"\blivery code\b", r"\blivery share\b", r"\bshare liveries\b",
+    r"\bliveries (?:for|of|on|in)\b", r"\bvinyl group\b",
+    r"\beventlab\b", r"\bphoto mode\b",
+    # Online / progression — Forza-specific terms
+    r"\bdrivatar\b", r"\bfestival playlist\b",
+    r"\bcar pass\b", r"\brivals (?:mode|time|leaderboard)\b",
+    r"\brace regulations?\b",
+    r"\bcredits? farm\b", r"\bwheelspin\b",
+    # Telemetry — bigrams
+    r"\btelemetry (?:overlay|data|app|export)\b",
+    r"\blap time(?:s)? (?:for|on|in)\b", r"\bsplit times?\b",
+]
+
+FORZA_COMPETITORS = [
+    "ForzaTune Pro", "ForzaTune", "Forza Race Engineer",
+    "Tuneberg", "Forzatools", "ForzaHub", "TuneOptimiser",
+    "Forza Stats",
+]
+
+# Highest-topic-wins on multi-hit (parallels LIENCLEAR_PHASE_PATTERNS).
+FORZA_TOPIC_PATTERNS = {
+    1: [  # tuning & telemetry
+        r"\btun(?:e|es|ing|er)\b", r"\bFFB\b", r"\bforce feedback\b",
+        r"\bdyno\b", r"\bgear ratios?\b", r"\btelemetry\b",
+        r"\bdeadzone\b", r"\bsensitivity curve\b", r"\bcamber\b",
+        r"\bbrake bias\b", r"\bwheelbase\b",
+    ],
+    2: [  # cosmetic & creative
+        r"\blivery\b", r"\bliveries\b", r"\bvinyl\b",
+        r"\bphoto mode\b", r"\beventlab\b", r"\bblueprint\b",
+    ],
+    3: [  # online & competitive
+        r"\brivals (?:mode)?\b", r"\bleaderboard\b", r"\bchampionship\b",
+        r"\brace regulations?\b", r"\bdrivatar\b", r"\blobby\b",
+        r"\bsplit times?\b", r"\blap time\b",
+    ],
+    4: [  # progression & economy
+        r"\baccolade\b", r"\bfestival playlist\b", r"\bcar pass\b",
+        r"\bcredits? farm\b", r"\bwheelspin\b",
+    ],
+}
+
+FORZA_TOPIC_LABELS = {
+    1: "Tuning & telemetry",
+    2: "Liveries & creative",
+    3: "Online & competitive",
+    4: "Progression & economy",
+}
+
+FORZA_PLAYER_PATTERNS = {
+    "tuner": [
+        r"\btune for\b", r"\btuning sheet\b", r"\bshare (?:tunes?|tuning)\b",
+        r"\btuning guide\b", r"\bmy tunes?\b",
+    ],
+    "livery_artist": [
+        r"\bshare liveries\b", r"\blivery code\b", r"\bvinyl group\b",
+        r"\bmy liveries\b", r"\bpaint(?:er|ing) job\b",
+    ],
+    "sim_racer": [
+        r"\bwheelbase\b", r"\bFanatec\b", r"\bMoza\b",
+        r"\bLogitech (?:G\d+|wheel)\b",
+        r"\bsim setup\b", r"\bFFB settings\b", r"\bsim racer\b",
+    ],
+    "casual": [
+        r"\bfirst Forza\b", r"\bnew to (?:forza|the series|the game)\b",
+        r"\bjust started\b", r"\bcasual (?:player|gamer)\b",
+    ],
+}
+
+# Casual posts less likely to convert to ad-revenue traffic (lower
+# session depth, more transient engagement).
+FORZA_PLAYER_MULTIPLIERS = {
+    "tuner":         1.0,
+    "livery_artist": 1.0,
+    "sim_racer":     1.0,
+    "casual":        0.6,
+}
+
+# Score component weights (sum = 1.0). `audience_reach` replaces per-user
+# `monetization` per the ad-revenue model.
+FORZA_RELEVANCE_WEIGHTS = {
+    "domain_hit":         0.30,
+    "tool_request":       0.25,
+    "diy_evidence":       0.20,
+    "audience_reach":     0.15,
+    "competitor_mention": 0.10,
+}
+
 # Profile overlays — selected via `--profile` CLI flag on export
 PROFILES = {
     "lienclear": {
@@ -524,6 +739,17 @@ PROFILES = {
             "Electricians", "HVAC", "Plumbing", "Roofing",
             "Concrete", "Carpentry", "Painting", "Flooring",
             "Welding", "Estimators",
+        },
+    },
+    "forza": {
+        "min_relevance": 0.25,            # lower than lienclear — launch corpus is thin
+        "strong_relevance": 0.40,
+        "min_cluster_posts": 2,
+        "rank_by": "forza_relevance",
+        "include_tool_gap_section": True,
+        "boost_subs": {
+            "forza", "ForzaHorizon", "forzahorizon6", "forzahorizon5",
+            "ForzaMotorsport", "forzahorizon4", "simracing",
         },
     },
 }

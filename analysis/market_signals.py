@@ -22,6 +22,20 @@ from config import (
     LIENCLEAR_DIY_PATTERNS,
     LIENCLEAR_URGENCY_PATTERNS,
     LIENCLEAR_FREQUENCY_PATTERNS,
+    GAMING_TOOL_REQUEST_PATTERNS,
+    GAMING_DIY_PATTERNS,
+    GAMING_PATREON_PATTERNS,
+    GAMING_KILL_PATTERNS,
+    GAMING_URGENCY_PATTERNS,
+    GAMING_AUDIENCE_REACH_CEILING,
+    GAMING_PATREON_MULTIPLIER,
+    GAMING_KILL_MULTIPLIER,
+    FORZA_DOMAIN_KEYWORDS,
+    FORZA_COMPETITORS,
+    FORZA_TOPIC_PATTERNS,
+    FORZA_PLAYER_PATTERNS,
+    FORZA_PLAYER_MULTIPLIERS,
+    FORZA_RELEVANCE_WEIGHTS,
 )
 
 _MONO_HIGH = [re.compile(p, re.IGNORECASE) for p in MONETIZATION_HIGH_KEYWORDS]
@@ -59,6 +73,37 @@ _ROLE_ORDER = ["office_manager", "bookkeeper", "owner_operator", "gc", "homeowne
 assert set(_ROLE_ORDER) == set(LIENCLEAR_ROLE_PATTERNS) == set(LIENCLEAR_ROLE_MULTIPLIERS), (
     "Lienclear role facets out of sync — _ROLE_ORDER, LIENCLEAR_ROLE_PATTERNS and "
     "LIENCLEAR_ROLE_MULTIPLIERS must share identical keys"
+)
+
+# Gaming-base precompiled patterns (game-agnostic; reused by per-game profiles)
+_GAMING_TOOL_REQ = [re.compile(p, re.IGNORECASE) for p in GAMING_TOOL_REQUEST_PATTERNS]
+_GAMING_DIY      = [re.compile(p, re.IGNORECASE) for p in GAMING_DIY_PATTERNS]
+_GAMING_PATREON  = [re.compile(p, re.IGNORECASE) for p in GAMING_PATREON_PATTERNS]
+_GAMING_KILL     = [re.compile(p, re.IGNORECASE) for p in GAMING_KILL_PATTERNS]
+_GAMING_URGENCY  = [re.compile(p, re.IGNORECASE) for p in GAMING_URGENCY_PATTERNS]
+
+# Forza-profile precompiled patterns
+_FORZA_DOMAIN = [re.compile(p, re.IGNORECASE) for p in FORZA_DOMAIN_KEYWORDS]
+_FORZA_COMPETITORS = re.compile(
+    r"\b(" + "|".join(re.escape(c) for c in FORZA_COMPETITORS) + r")\b",
+    re.IGNORECASE,
+)
+_FORZA_TOPICS = {
+    topic: [re.compile(p, re.IGNORECASE) for p in patterns]
+    for topic, patterns in FORZA_TOPIC_PATTERNS.items()
+}
+_FORZA_PLAYERS = {
+    role: [re.compile(p, re.IGNORECASE) for p in patterns]
+    for role, patterns in FORZA_PLAYER_PATTERNS.items()
+}
+
+# Player-role priority. Sim-racer is most specific (paid-rig owner, FFB-curious,
+# highest ad-engagement); then tuner / livery_artist (creator segments);
+# casual last as the catch-all. Same lock-step assert pattern as lienclear.
+_FORZA_PLAYER_ORDER = ["sim_racer", "tuner", "livery_artist", "casual"]
+assert set(_FORZA_PLAYER_ORDER) == set(FORZA_PLAYER_PATTERNS) == set(FORZA_PLAYER_MULTIPLIERS), (
+    "Forza player facets out of sync — _FORZA_PLAYER_ORDER, FORZA_PLAYER_PATTERNS "
+    "and FORZA_PLAYER_MULTIPLIERS must share identical keys"
 )
 
 
@@ -222,4 +267,166 @@ def compute_lienclear_relevance(title: str, body: str, subreddit: str) -> dict:
     multiplier = LIENCLEAR_ROLE_MULTIPLIERS.get(detected_role, 1.0)
     out["score"] = round(max(0.0, min(1.0, raw_score * multiplier)), 4)
 
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Gaming profile — companion-tool discovery for game communities.
+# Monetization model is free-with-ads or micro-subs, NOT paid app sales —
+# audience reach replaces per-user WTP as the viability proxy.
+# ---------------------------------------------------------------------------
+
+
+def compute_audience_reach(subreddit: str, subscribers: int) -> float:
+    """Score [0.0, 1.0] — subreddit-scale viability proxy for the ad-revenue model.
+
+    Replaces per-user WTP as the gaming relevance signal: a free ad-supported
+    tool's value scales with eyeballs reachable in the source community, not
+    with what any individual would pay. Mirrors compute_market_size_score but
+    recalibrated for gaming-sub scale (500K ceiling vs 10M for B2B).
+    """
+    if not subscribers:
+        return 0.0
+    return min(1.0, subscribers / GAMING_AUDIENCE_REACH_CEILING)
+
+
+def compute_gaming_intent(title: str, body: str) -> dict:
+    """Game-agnostic gaming-intent signals — reusable by every per-game profile.
+
+    Returns raw pattern hits without scoring. Per-game relevance functions
+    (see compute_forza_relevance) compose these with their own domain
+    matching and weighting. This split lets game #2 reuse the gaming base
+    without recomputing tool-request / DIY / patreon logic.
+    """
+    text = f"{title} {body}".strip()
+    if not text:
+        return {
+            "tool_request_hit": False, "tool_request_matches": [],
+            "diy_hit": False, "diy_matches": [],
+            "patreon_hit": False, "kill_hit": False,
+            "urgency_matches": [],
+        }
+    tool_req = sorted({m.group(0) for p in _GAMING_TOOL_REQ for m in p.finditer(text)})
+    diy = sorted({m.group(0) for p in _GAMING_DIY for m in p.finditer(text)})
+    patreon = any(p.search(text) for p in _GAMING_PATREON)
+    kill = any(p.search(text) for p in _GAMING_KILL)
+    urgency = sorted({m.group(0) for p in _GAMING_URGENCY for m in p.finditer(text)})
+    return {
+        "tool_request_hit": bool(tool_req),
+        "tool_request_matches": tool_req,
+        "diy_hit": bool(diy),
+        "diy_matches": diy,
+        "patreon_hit": patreon,
+        "kill_hit": kill,
+        "urgency_matches": urgency,
+    }
+
+
+def classify_forza_topic(title: str, body: str) -> int | None:
+    """Bucket a post into a Forza topic (1=tuning, 2=cosmetic, 3=online, 4=progression).
+
+    Highest-topic-wins on multi-hit — a post mentioning livery design alongside
+    online championships is really a Topic-3 ask (the cosmetic layer is assumed
+    already familiar by the time the user reaches for competition tools).
+    Returns None if no pattern matches; the caller can default to Topic 1
+    (tuning) for domain-hit posts, mirroring classify_lienclear_phase's
+    Phase-1-default convention.
+    """
+    text = f"{title} {body}".strip()
+    if not text:
+        return None
+    hit_topics = []
+    for topic, patterns in _FORZA_TOPICS.items():
+        if any(p.search(text) for p in patterns):
+            hit_topics.append(topic)
+    return max(hit_topics) if hit_topics else None
+
+
+def compute_forza_relevance(
+    title: str, body: str, subreddit: str, subscribers: int,
+) -> dict:
+    """Score how on-topic a post is for the Forza gaming profile.
+
+    Parallel structure to compute_lienclear_relevance — composes shared
+    gaming-intent signals with Forza-specific domain + topic + competitor
+    matching. The subscribers argument feeds audience_reach (the ad-revenue
+    viability proxy that replaces per-user WTP). Without a Forza-domain hit,
+    the score is capped at 0.20 so generic gaming-intent posts about other
+    games can't clear the export threshold.
+    """
+    text = f"{title} {body}".strip()
+    intent = compute_gaming_intent(title, body)
+    reach = compute_audience_reach(subreddit, subscribers)
+
+    out = {
+        "score": 0.0,
+        "domain_hit": False,
+        "domain_matches": [],
+        "topic": None,
+        "player_role": None,
+        "competitor_mentions": [],
+        "tool_request_hit": intent["tool_request_hit"],
+        "tool_request_matches": intent["tool_request_matches"],
+        "diy_hit": intent["diy_hit"],
+        "diy_matches": intent["diy_matches"],
+        "patreon_hit": intent["patreon_hit"],
+        "kill_hit": intent["kill_hit"],
+        "audience_reach": round(reach, 3),
+        "urgency_matches": intent["urgency_matches"],
+    }
+    if not text:
+        return out
+
+    w = FORZA_RELEVANCE_WEIGHTS
+    components: dict[str, float] = {}
+
+    # Forza domain — required signal. Without it, score is capped (same gate
+    # as compute_lienclear_relevance's domain check at the end of the function).
+    domain_hits = sorted({m.group(0) for p in _FORZA_DOMAIN for m in p.finditer(text)})
+    out["domain_hit"] = bool(domain_hits)
+    out["domain_matches"] = domain_hits
+    components["domain_hit"] = 1.0 if domain_hits else 0.0
+
+    # Tool-request — primary signal under the ad model
+    components["tool_request"] = 1.0 if intent["tool_request_hit"] else 0.0
+
+    # DIY evidence — highest-conviction ICP signal (spreadsheet-builder = future user)
+    components["diy_evidence"] = 1.0 if intent["diy_hit"] else 0.0
+
+    # Audience reach — replaces per-user monetization weight
+    components["audience_reach"] = reach
+
+    # Named competitor mentions — light positive (active tool market = ad CPMs exist)
+    comp_hits = sorted({m.group(1) for m in _FORZA_COMPETITORS.finditer(text)})
+    out["competitor_mentions"] = comp_hits
+    components["competitor_mention"] = min(1.0, len(comp_hits) * 0.5) if comp_hits else 0.0
+
+    # Topic + player-role classification (facets, not weight components)
+    out["topic"] = classify_forza_topic(title, body)
+    detected_role = None
+    for role in _FORZA_PLAYER_ORDER:
+        if any(p.search(text) for p in _FORZA_PLAYERS[role]):
+            detected_role = role
+            break
+    out["player_role"] = detected_role
+
+    raw_score = sum(w[k] * v for k, v in components.items())
+
+    # Domain-hit gate — without Forza vocab, the gaming-intent signals
+    # could fit any game. Cap so off-domain posts can't clear the export
+    # threshold while keeping the facet breakdown intact.
+    if not domain_hits:
+        raw_score = min(raw_score, 0.20)
+
+    # Multipliers — applied in compounding order. Player-role first (casual
+    # downweight), then Patreon bonus, then kill penalty (which dominates).
+    multiplier = 1.0
+    if detected_role:
+        multiplier *= FORZA_PLAYER_MULTIPLIERS.get(detected_role, 1.0)
+    if intent["patreon_hit"]:
+        multiplier *= GAMING_PATREON_MULTIPLIER
+    if intent["kill_hit"]:
+        multiplier *= GAMING_KILL_MULTIPLIER
+
+    out["score"] = round(max(0.0, min(1.0, raw_score * multiplier)), 4)
     return out
