@@ -8,7 +8,7 @@ from threading import Lock
 class RateLimiter:
     """Token-bucket rate limiter with jitter for Reddit API compliance."""
 
-    def __init__(self, requests_per_second: float = 1.0, jitter: tuple[float, float] = (0.5, 1.5)):
+    def __init__(self, requests_per_second: float = 1.0, jitter: tuple[float, float] = (1.0, 1.5)):
         self.min_interval = 1.0 / requests_per_second
         self.jitter = jitter
         self._last_request = 0.0
@@ -23,7 +23,9 @@ class RateLimiter:
             wait_time = self.min_interval - elapsed
 
             if wait_time > 0:
-                jitter_factor = random.uniform(*self.jitter)
+                # Clamp factor to >=1.0 so jitter only EXTENDS the wait —
+                # never undercuts min_interval (preserves 1 req/s ceiling).
+                jitter_factor = max(1.0, random.uniform(*self.jitter))
                 total_wait = wait_time * jitter_factor
                 time.sleep(total_wait)
 

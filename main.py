@@ -1,9 +1,18 @@
 """Reddit Market Intelligence Pipeline — CLI Entrypoint."""
 
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    # Write via .tmp + os.replace so Ctrl-C / disk-full can't leave a
+    # truncated file that later trips digest-record FormatMismatch.
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, path)
 
 # Ensure project root is on the path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -405,7 +414,7 @@ def export(top, output, min_score, profile):
     generator = ReportGenerator(db, profile=profile if profile != "default" else None)
     report = generator.generate(top_n=top, min_score=min_score)
 
-    Path(output).write_text(report, encoding="utf-8")
+    _atomic_write_text(Path(output), report)
     console.print(f"[bold green]Report exported to {output}[/bold green]")
     if profile != "default":
         console.print(f"[dim]Profile: {profile}[/dim]")
@@ -436,7 +445,7 @@ def lienclear_competitor_gaps(output, posts_per_competitor, quotes_per_competito
         quotes_per_competitor=quotes_per_competitor,
     ).generate()
     Path(output).parent.mkdir(parents=True, exist_ok=True)
-    Path(output).write_text(report, encoding="utf-8")
+    _atomic_write_text(Path(output), report)
     console.print(f"[bold green]Competitor gap report exported to {output}[/bold green]")
     db.close()
 
@@ -462,7 +471,7 @@ def lienclear_seo_phrases(output, min_relevance, top):
         db, min_relevance=min_relevance, top_n=top,
     ).generate()
     Path(output).parent.mkdir(parents=True, exist_ok=True)
-    Path(output).write_text(report, encoding="utf-8")
+    _atomic_write_text(Path(output), report)
     console.print(f"[bold green]SEO phrase report exported to {output}[/bold green]")
     db.close()
 
@@ -511,7 +520,7 @@ def delta(baseline, output):
         competitor_delta=competitor_delta,
     )
     Path(output).parent.mkdir(parents=True, exist_ok=True)
-    Path(output).write_text(report, encoding="utf-8")
+    _atomic_write_text(Path(output), report)
     console.print(f"[bold green]Delta report exported to {output}[/bold green]")
     db.close()
 
@@ -552,7 +561,7 @@ def digest(top, output, n_niches, include_killed):
         from datetime import date
         output = f"reports/weekly/{date.today().isoformat()}.md"
     Path(output).parent.mkdir(parents=True, exist_ok=True)
-    Path(output).write_text(md, encoding="utf-8")
+    _atomic_write_text(Path(output), md)
     console.print(f"[bold green]Digest exported to {output}[/bold green]")
     console.print(f"[dim]{written} niches written. Open: {output}[/dim]")
     db.close()

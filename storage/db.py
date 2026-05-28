@@ -387,28 +387,40 @@ class Database:
         return dict(row) if row else None
 
     def get_build_centroids(self) -> list[dict]:
-        """For taste-learning: return centroids of niches the operator has
-        marked `build`. Joins by stable_key — if a build-verdict niche has
-        been re-niched and its fingerprint changed, it's correctly excluded
-        (the operator's taste was about that specific niche, not the new
-        one that re-clustered into a different shape)."""
+        """For taste-learning: return centroids of niches whose LATEST
+        verdict is `build`. Joins by stable_key — if a build-verdict niche
+        has been re-niched and its fingerprint changed, it's correctly
+        excluded (the operator's taste was about that specific niche, not
+        the new one that re-clustered into a different shape). The
+        latest-per-fingerprint subquery prevents a `build` → `kill` flip
+        from continuing to contaminate taste-learning."""
         cur = self.conn.execute(
             """SELECT DISTINCT n.label, n.centroid, n.stable_key
                FROM niches n
                JOIN verdicts v ON v.subject_fingerprint = n.stable_key
                WHERE v.decision = 'build'
+                 AND v.decided_at = (
+                     SELECT MAX(decided_at) FROM verdicts v2
+                     WHERE v2.subject_fingerprint = v.subject_fingerprint
+                 )
                  AND n.centroid IS NOT NULL
                  AND n.stable_key IS NOT NULL"""
         )
         return [dict(r) for r in cur.fetchall()]
 
     def get_killed_fingerprints(self) -> set:
-        """All fingerprints with a current `kill` verdict. Returns a set
-        for O(1) lookup during digest filtering."""
+        """Fingerprints whose LATEST verdict is `kill`. Returns a set for
+        O(1) lookup during digest filtering. The latest-per-fingerprint
+        subquery ensures a `kill` → `build` flip correctly removes the
+        fingerprint from this set."""
         cur = self.conn.execute(
-            """SELECT subject_fingerprint FROM verdicts
+            """SELECT subject_fingerprint FROM verdicts v
                WHERE decision = 'kill'
-                 AND subject_fingerprint IS NOT NULL"""
+                 AND subject_fingerprint IS NOT NULL
+                 AND decided_at = (
+                     SELECT MAX(decided_at) FROM verdicts v2
+                     WHERE v2.subject_fingerprint = v.subject_fingerprint
+                 )"""
         )
         return {r[0] for r in cur.fetchall()}
 

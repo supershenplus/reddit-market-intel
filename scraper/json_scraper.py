@@ -29,7 +29,9 @@ class JsonScraper(BaseScraper):
         self.rate_limiter.wait()
 
         def _request():
-            resp = self.session.get(url, params=params)
+            # (connect, read) timeout — prevents indefinite hangs when Reddit
+            # stalls a socket (backoff never fires without this).
+            resp = self.session.get(url, params=params, timeout=(5, 30))
             if resp.status_code == 429:
                 raise RateLimitError(f"429 from {url}")
             resp.raise_for_status()

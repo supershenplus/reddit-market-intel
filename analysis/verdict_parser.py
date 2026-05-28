@@ -49,6 +49,19 @@ _CHECKBOX_RE = re.compile(
 # Optional inline notes after the checkbox row: "notes: <text>"
 _NOTES_RE = re.compile(r"notes?:\s*(.*?)(?:\n|$)", re.IGNORECASE)
 
+# Per-line `notes:` head, used to strip the notes tail before checkbox scan so
+# operator-written text like `notes: maybe [x] build later` can't inflate the
+# checked-box count and silently drop the niche.
+_NOTES_HEAD_RE = re.compile(r"\bnotes?:\s*", re.IGNORECASE)
+
+
+def _strip_notes_for_checkbox_scan(body: str) -> str:
+    out = []
+    for line in body.split("\n"):
+        m = _NOTES_HEAD_RE.search(line)
+        out.append(line[: m.start()] if m else line)
+    return "\n".join(out)
+
 
 class FormatMismatch(Exception):
     """Raised when the digest file doesn't carry the expected digest_format."""
@@ -109,8 +122,9 @@ def _parse_niche_block(label: str, body: str) -> Optional[dict] | str:
     fingerprint = fp_match.group(1).strip() if fp_match else None
 
     # All checkbox matches in the body. There may be 3 (the three options),
-    # we want the ones marked with x/X.
-    boxes = _CHECKBOX_RE.findall(body)
+    # we want the ones marked with x/X. Strip `notes: ...` tails first so
+    # text the operator wrote inside notes can't be mis-counted as a check.
+    boxes = _CHECKBOX_RE.findall(_strip_notes_for_checkbox_scan(body))
     if not boxes:
         return None  # silent — no checkbox row at all (operator didn't fill)
     checked = [decision.lower() for mark, decision in boxes if mark]

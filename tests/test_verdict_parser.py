@@ -113,6 +113,20 @@ class TestPerNicheValidation:
         assert len(result) == 1
         assert result[0]["note"] is None  # `___` is treated as unset
 
+    def test_checkbox_inside_notes_is_ignored(self):
+        # CORR-W2 regression: operator-written `[x] build` inside notes used
+        # to inflate the checked count and silently skip the niche.
+        block = (
+            "## 1. niche A — score 0.5\n"
+            "- [x] build  [ ] watch  [ ] kill   notes: maybe [x] build later\n"
+            "- fingerprint: abc123\n"
+        )
+        result = parse_digest(_digest(block))
+        assert len(result) == 1
+        assert result[0]["decision"] == "build"
+        assert result[0]["note"] == "maybe [x] build later"
+        assert parse_digest.last_warnings == []
+
 
 # --- multi-niche soft fail -------------------------------------------------
 
