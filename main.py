@@ -24,6 +24,7 @@ from rich.table import Table
 from config import (
     SEED_SUBREDDITS, DEFAULT_LIMIT, DEFAULT_SORT,
     LLM_BATCH_SIZE, LLM_MAX_POSTS_PER_RUN, LLM_RAG_PREFILTER,
+    PROFILES,
 )
 from storage.db import Database
 from scraper.praw_scraper import get_scraper
@@ -57,6 +58,15 @@ from analysis.cluster_delta import (
 )
 
 console = Console()
+
+# Per-profile relevance dispatch — uniform (title, body, sub, subscribers)
+# signature absorbs the lienclear (no subs) vs forza (uses subs) arg mismatch.
+# Adding a profile here + a key in config.PROFILES + a *Renderer in
+# export/report.py is the full surface for a new thesis.
+DEEP_PROFILE_RELEVANCE = {
+    "lienclear": lambda title, body, sub, subs: compute_lienclear_relevance(title, body, sub),
+    "forza":     lambda title, body, sub, subs: compute_forza_relevance(title, body, sub, subs),
+}
 
 
 @click.group()
@@ -267,7 +277,7 @@ def scrape_all(max_age_days, limit, sort, comments, since):
 )
 @click.option(
     "--deep-profile",
-    type=click.Choice(["lienclear", "forza"]),
+    type=click.Choice(list(DEEP_PROFILE_RELEVANCE.keys())),
     default=None,
     help="Run an optional deep-profile overlay on each classified post "
     "(extracts thesis-specific facets into matched_patterns). "
@@ -335,13 +345,10 @@ def analyze(force, deep_profile, rescore_niches):
             subscribers = sub_info.get("subscribers", 0) if sub_info else 0
 
             mp_payload = {"intent": existing_mp}
-            if deep_profile == "lienclear":
-                mp_payload["lienclear"] = compute_lienclear_relevance(
-                    post["title"] or "", post["body"] or "", post["subreddit"]
-                )
-            elif deep_profile == "forza":
-                mp_payload["forza"] = compute_forza_relevance(
-                    post["title"] or "", post["body"] or "", post["subreddit"], subscribers,
+            if deep_profile:
+                mp_payload[deep_profile] = DEEP_PROFILE_RELEVANCE[deep_profile](
+                    post["title"] or "", post["body"] or "",
+                    post["subreddit"], subscribers,
                 )
             result["matched_patterns"] = json.dumps(mp_payload)
 
@@ -450,10 +457,10 @@ def discover(from_sub, category):
 @click.option("--min-score", default=0.0, help="Minimum opportunity score threshold")
 @click.option(
     "--profile",
-    type=click.Choice(["default", "lienclear", "forza"]),
+    type=click.Choice(["default", *PROFILES.keys()]),
     default="default",
-    help="Report overlay: 'default' (generic SMB), 'lienclear' (construction "
-    "lien-waiver SaaS), or 'forza' (Forza-launch companion-tool gaps).",
+    help="Report overlay: 'default' (generic SMB) or one of the registered "
+    "profiles in config.PROFILES (currently: " + ", ".join(PROFILES.keys()) + ").",
 )
 def export(top, output, min_score, profile):
     """Export clustered opportunity report as markdown."""

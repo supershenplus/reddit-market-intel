@@ -142,6 +142,28 @@ This is a single-repo project. No SHARED-STANDARDS sync needed. If additional re
 
 <!-- SHARED-STANDARDS:END -->
 
+## Gaming-niche gate
+
+Before writing any brief or scoping any build on a gaming-niche tool opportunity surfaced by RIM, run the 5-step gate. Parallel to plan mode gate: process-level, not advisory.
+
+1. **Franchise leader TAM ceiling.** Identify the 8+ year incumbent leader tool. Pull SimilarWeb traffic for its domain. That number is the realistic ceiling for any new entrant.
+2. **Required-pageviews reality check.** `required_pageviews_per_mo = target_monthly_revenue / $4` (gaming RPM, blended pessimistic). Compare to (leader_traffic × 5 PV/visit) via the play ladder:
+
+   | Play | Realistic ceiling vs leader | When |
+   |---|---|---|
+   | Win the niche (better UX/SEO, same product) | 2-5x leader | Default |
+   | Expand the niche (new geo / platform / format) | 5-10x leader | Specific latent-audience thesis |
+   | Create a category (new use case) | Uncapped | Discovery play, no leader to benchmark |
+
+   For "win the niche": required > leader × 25 → KILL. Required > leader × 10 → MARGINAL. Else PROCEED. For "expand the niche": multiply leader_traffic by 5x before comparing, document the latent-audience thesis. For "create a category": gate doesn't apply — substitute adjacent-category benchmarks + qualitative demand signals.
+3. **Saturation count.** 4+ live competitors launched in last 12 months AND one well-funded or 5K+ Discord members → high saturation, expect compressed margins. If an existing player already covers ALL planned scope, the "first to scrape" wedge is mooted.
+4. **Reddit API ToS check.** PRAW free tier is non-commercial only since 2023. Ad-monetized scrapers are the banned use case. If ad-monetized + Reddit-scraped, default to submission-driven architecture.
+5. **Behavioral signal density.** Gaming demand expresses behaviorally, not verbally. Count share-code postings per 1000 comments, Discord-invite density, repeat-question frequency. Low density → audience may not exist or existing tools absorbed it.
+
+**Hard rule: if step 1, 2, or 3 fails, no brief gets written. No exceptions.** Launch-window urgency and incumbent weakness do not override the TAM math.
+
+Full methodology + leader benchmarks: `~/.claude/projects/-Users-eva0012-Projects-reddit-market-intel/memory/reference-gaming-niche-preflight-checklist.md` and `reference-gaming-tam-ceiling-methodology.md`.
+
 ## Model selection by task
 
 | Task | Model |
