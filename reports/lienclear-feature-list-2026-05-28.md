@@ -1,5 +1,14 @@
 # Lienclear feature list — derived from RIM 2026-05-28
 
+> **⚠ STATUS (added 2026-05-28 post-review): Phase 2 (F5/F6/F7 — paid AIA pay-app + change-order core) is PAUSED.**
+> A 3-agent strategic review the same day surfaced: (a) LienWaiver.pro launched at $49 in Feb 2026 and Built Payments went free in Oct 2025, partially commoditizing the per-action pricing wedge; (b) the feature list has zero buyer-side (owner/controller) validation behind it — all 41 source facets are sub/operator-side, hitting the [[feedback-construction-buyer-operator-split]] kill risk head-on; (c) F5 engineering is 4-6mo solo (not a paper MVP), plus AIA G702 form licensing risk. **Do not build F5/F6/F7 without 3+ owner-side paid pilots from the Phase 1 (F1-F4) funnel.**
+>
+> **Read first:** `reports/lienclear-strategic-review-2026-05-28.md` — has the convergent 3-agent verdict, the kill criterion (60 days, no paid owner pilot → kill), and the surviving-wedge re-anchor (compliance moat + California SB 440 statutory automation, not transparent pricing).
+>
+> **What survives:** Phase 1 (F1-F4 — NOI generation, waiver gen, lien filing wizard, late-AR/SB-440 notice generator) is the real product surface for the next 60 days. The compliance moat (state-correct NOI, 3x-damages avoidance, SB 440 24%-interest clocks) is the only differentiation that wasn't undercut by 2026-Q1/Q2 competitor moves.
+
+---
+
 **Derivation:** 41 lien-relevant `is_pain_point=1` facets from r/Construction + r/ConstructionManagers + r/Contractor (post-W4-1 batch). Features are mapped to the existing 3-phase ProductBlueprint (Free waiver → Paid AIA → Notifications/GC portal). Every feature carries a concrete evidence URL + signal type so prioritization arguments don't drift into vibes.
 
 **Thesis fit:** all 41 facets are sub/contractor-side. Zero are owner/developer-side. Confirms the existing cohort target ($1-10M specialty subs in trades Siteline skips). Per-action pricing remains the only viable price-side differentiator vs Procore.
