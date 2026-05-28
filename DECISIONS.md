@@ -198,3 +198,46 @@ lever — lifts generic classification rate, carries false-positive risk, overla
 W5-4). Note: this closes the *classifier-gate* component of `BUG-thin-signal`; the *corpus
 thinness* component (only 5 domain-hit posts exist) remains a sourcing problem for a future
 rescrape, not a code blocker.
+
+## 2026-05-27: Per-game profile architecture (RIM gaming pivot)
+
+**Choice:** Adopted "per-game profile + shared gaming base" architecture for RIM thesis-specific
+scoring. Mirrors the lienclear precedent (one monolithic pattern set per thesis, no premature
+abstraction). Game-agnostic GAMING_* constants (tool-request, DIY, Patreon, kill, urgency,
+audience-reach) shared across all future game profiles; per-game FORZA_* constants (domain
+match list, competitors, topic partitions, player roles) added per profile. Adding the next
+game (Helldivers 2, etc.) becomes a copy-paste of the per-game block rather than a refactor.
+
+**Why:** Mirrors the working lienclear precedent. Single-monolithic "gaming" profile would blur
+per-game signal (Forza tuning posts and Helldivers loadout posts would hit the same buckets).
+Full Profile-class abstraction is premature with only two profiles (lienclear + forza) — wait
+for profile #3 to design the right abstraction. Per CLAUDE.md three-similar-lines-better-than-
+premature-abstraction.
+
+**Rejected:** Single generic "gaming" profile (loses signal sharpness, would need refactor at
+profile #2 anyway). Full Profile-strategy class abstraction (premature without 3+ profiles to
+derive the right contract from).
+
+## 2026-05-27: Forza content aggregator — no-build verdict
+
+**Choice:** Do not build the Forza content aggregator (liveries + tunes + EventLab) despite
+having shipped the profile system to support it. Adopted TAM-first pre-flight gate as RIM
+methodology for all future gaming-niche briefs: pull franchise leader's SimilarWeb traffic
+FIRST, compute required pageviews at $4 RPM, kill thesis if required > leader_traffic × 25
+(or apply "what kind of play is this?" ladder for 2-5x / 5-10x / uncapped scenarios).
+
+**Why:** Three-agent adversarial sweep produced unanimous "pivot" verdict. Decisive structural
+findings: (a) Forza tool market TAM ceiling is ~15K visits/mo (ForzaTune Pro, 8-year leader)
+— required pageviews for $14K/mo target = 30-100x leader, mathematically out of reach; (b)
+Reddit PRAW free tier is non-commercial only since 2023 — ad-monetized scraping is the
+banned use case (one report → takedown); (c) 4+ live FH6 incumbents (ForzaHub, ForzaTunes,
+ForzaFire, FH6Hub, FH6Tune) — saturated; (d) base-rate distribution for 2-person AAA-launch
+aggregators: 90% land at $0-3K/mo, winners take 7-17 years and are submission-driven not
+scrape-driven. At realistic "win-the-niche" 5x leader ceiling, Forza play would generate
+~$750/mo gross — above $50-100/mo validation bar but far below the brief's $14K career-
+replacement claim. The brief's math conflated "create-a-category" upside with "win-the-niche"
+architecture.
+
+**Rejected:** Build despite TAM concerns (would generate ~$750/mo at best, not the $14K/mo
+projected). Pivot immediately to Helldivers 2 (deferred — same TAM check needs to run first).
+Build as portfolio piece only (skip — the user wants income streams, not portfolio).
