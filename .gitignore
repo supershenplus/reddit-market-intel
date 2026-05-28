@@ -10,3 +10,4 @@ venv/
 .venv/
 HANDOFF.md
 .lc_docs/
+.DS_Store
