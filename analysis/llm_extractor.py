@@ -130,6 +130,7 @@ def select_posts(
     re_extract: bool = False,
     sample_rate: float = 0.10,
     rag_classifier=None,
+    category: str | None = None,
 ) -> list[dict]:
     """Return posts to extract, each tagged with `_prefilter` source.
 
@@ -138,6 +139,11 @@ def select_posts(
     - `prefilter='sampled'`: RAG-positive + sample_rate fraction of RAG-negative
       (recall audit).
     - `prefilter='off'`: all candidates (backfills, version migrations).
+    - `category`: if set, intersect the candidate pool with
+      `SEED_SUBREDDITS[category]` before any prefilter — concentrates a batch
+      on a single vertical for thesis-targeted refinement (e.g. construction
+      for lienclear). Unknown category raises ValueError. Composes with all
+      three prefilter modes.
 
     `rag_classifier` is injectable for tests; in normal use it's lazily
     imported so this module stays importable without sentence-transformers.
@@ -146,6 +152,15 @@ def select_posts(
         candidates = [dict(r) for r in db.conn.execute("SELECT * FROM posts")]
     else:
         candidates = db.get_posts_without_facets(LLM_PROMPT_VERSION)
+    if category is not None:
+        from config import SEED_SUBREDDITS
+        if category not in SEED_SUBREDDITS:
+            raise ValueError(
+                f"Unknown category: {category!r}. "
+                f"Valid: {sorted(SEED_SUBREDDITS.keys())}"
+            )
+        allowed = set(SEED_SUBREDDITS[category])
+        candidates = [p for p in candidates if p.get("subreddit") in allowed]
     if not candidates:
         return []
 

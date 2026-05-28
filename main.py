@@ -649,7 +649,13 @@ def _default_prefilter() -> str:
     "--output-root", default=None,
     help="Override the batch output root (default: data/llm_batches/).",
 )
-def llm_export(batch_size, max_posts, prefilter, re_extract, output_root):
+@click.option(
+    "--category", default=None,
+    help="Filter the extraction pool to subs in SEED_SUBREDDITS[category]. "
+    "Useful for thesis-targeted batches (e.g. --category construction for "
+    "lienclear refinement). Unknown category errors out.",
+)
+def llm_export(batch_size, max_posts, prefilter, re_extract, output_root, category):
     """Phase 3 — export posts to LLM batch markdown files."""
     from analysis.llm_extractor import select_posts, export_batches
 
@@ -657,10 +663,13 @@ def llm_export(batch_size, max_posts, prefilter, re_extract, output_root):
     prefilter = prefilter or _default_prefilter()
     console.print(
         f"[bold]Selecting posts (prefilter={prefilter}, max={max_posts}, "
-        f"re_extract={re_extract})...[/bold]"
+        f"re_extract={re_extract}"
+        + (f", category={category}" if category else "")
+        + ")...[/bold]"
     )
     posts = select_posts(
         db, prefilter=prefilter, max_posts=max_posts, re_extract=re_extract,
+        category=category,
     )
     if not posts:
         console.print(
@@ -716,7 +725,13 @@ def llm_import(batch_dir):
     type=click.Choice(["strict", "sampled", "off"]),
 )
 @click.option("--re-extract", is_flag=True, default=False)
-def llm_extract(batch_size, max_posts, prefilter, re_extract):
+@click.option(
+    "--category", default=None,
+    help="Filter the extraction pool to subs in SEED_SUBREDDITS[category]. "
+    "Useful for thesis-targeted batches (e.g. --category construction for "
+    "lienclear refinement). Unknown category errors out.",
+)
+def llm_extract(batch_size, max_posts, prefilter, re_extract, category):
     """Phase 3 — top-level driver: export batches + print operator handoff.
 
     Run this, then open a Claude Code session and follow the printed
@@ -727,10 +742,13 @@ def llm_extract(batch_size, max_posts, prefilter, re_extract):
     prefilter = prefilter or _default_prefilter()
     console.print(
         f"[bold]Selecting posts (prefilter={prefilter}, max={max_posts}, "
-        f"re_extract={re_extract})...[/bold]"
+        f"re_extract={re_extract}"
+        + (f", category={category}" if category else "")
+        + ")...[/bold]"
     )
     posts = select_posts(
         db, prefilter=prefilter, max_posts=max_posts, re_extract=re_extract,
+        category=category,
     )
     if not posts:
         console.print(

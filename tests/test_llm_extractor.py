@@ -178,6 +178,59 @@ class TestSelectPostsPrefilter:
         result = select_posts(db, prefilter="off", max_posts=2)
         assert len(result) == 2
 
+
+# --- select_posts: --category filter (thesis-targeted batching) -----------
+
+class TestCategoryFilter:
+    """Verifies `--category construction` (and equivalents) intersect the
+    candidate pool with SEED_SUBREDDITS[category] before prefilter applies.
+    Reusable infra for any thesis-targeted batch."""
+
+    def test_category_intersects_with_seed_subreddits(self, db):
+        # Seed posts across multiple verticals; only construction subs survive.
+        _seed_post(db, "t3_con1", "lien waiver question", subreddit="Construction")
+        _seed_post(db, "t3_con2", "AIA G702 issue", subreddit="ConstructionManagers")
+        _seed_post(db, "t3_smb", "saas pricing", subreddit="SaaS")
+        _seed_post(db, "t3_ecom", "shopify problem", subreddit="ecommerce")
+
+        result = select_posts(db, prefilter="off", category="construction")
+        ids = {p["subreddit"] for p in result}
+        assert "Construction" in ids
+        assert "ConstructionManagers" in ids
+        assert "SaaS" not in ids
+        assert "ecommerce" not in ids
+
+    def test_unknown_category_raises_value_error(self, db):
+        _seed_post(db, "t3_a", "x", subreddit="Construction")
+        with pytest.raises(ValueError, match="Unknown category"):
+            select_posts(db, prefilter="off", category="not_a_real_category")
+
+    def test_category_none_no_filtering(self, db):
+        # Backward-compat: default (no category) behaves exactly as before.
+        _seed_post(db, "t3_con", "lien", subreddit="Construction")
+        _seed_post(db, "t3_smb", "saas", subreddit="SaaS")
+        result = select_posts(db, prefilter="off", category=None)
+        subs = {p["subreddit"] for p in result}
+        assert subs == {"Construction", "SaaS"}
+
+    def test_category_composes_with_strict_prefilter(self, db):
+        # Construction post with RAG-positive title + cross-vertical post.
+        # Only the construction post should survive category + RAG.
+        _seed_post(db, "t3_con", "PAIN HIT", subreddit="Construction")
+        _seed_post(db, "t3_smb", "PAIN HIT", subreddit="SaaS")
+        rag = _StubRag(accept_titles=["PAIN HIT"])
+        result = select_posts(
+            db, prefilter="strict", rag_classifier=rag, category="construction",
+        )
+        assert len(result) == 1
+        assert result[0]["subreddit"] == "Construction"
+
+    def test_category_with_no_matching_subs_returns_empty(self, db):
+        # Seed only non-construction posts.
+        _seed_post(db, "t3_smb", "saas", subreddit="SaaS")
+        result = select_posts(db, prefilter="off", category="construction")
+        assert result == []
+
     def test_empty_candidates_returns_empty(self, db):
         # No posts seeded
         assert select_posts(db, prefilter="off") == []
