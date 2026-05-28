@@ -323,6 +323,16 @@ class Database:
         self.conn.commit()
         return cur.lastrowid
 
+    def update_niche_saturation_note(self, niche_id: int, note: str | None):
+        """W4-1: rescore path writes saturation_note out-of-band so the
+        existing update_niche_scores signature doesn't churn. Pass None to
+        explicitly clear the note."""
+        self.conn.execute(
+            "UPDATE niches SET saturation_note = ? WHERE id = ?",
+            (note, niche_id),
+        )
+        self.conn.commit()
+
     def update_niche_scores(
         self, niche_id: int, label: str,
         complexity_score: float, revenue_score: float, rank_score: float,

@@ -210,7 +210,8 @@ def test_analyze_rescore_niches_updates_scores(runner, cli_db):
     assert niche["complexity_score"] == 0.5  # dumb-fallback constant
     bd = json.loads(niche["score_breakdown"])
     assert bd["mode"] == "dumb_fallback"
-    assert bd["breakdown_version"] == "v1"
+    from analysis.niche_scorer import BREAKDOWN_VERSION
+    assert bd["breakdown_version"] == BREAKDOWN_VERSION
 
 
 def test_export_profile_default_omits_domain_hit(runner, cli_db, tmp_path):

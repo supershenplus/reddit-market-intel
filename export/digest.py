@@ -14,7 +14,7 @@ from datetime import date
 from analysis.niche_scorer import filter_eligible
 from analysis.saturation import compute_saturation
 from analysis.taste import compute_taste_boost, hint_when_n_eq_1
-from config import LLM_PROMPT_VERSION
+from config import LLM_PROMPT_VERSION, SATURATION_TAG_THRESHOLD
 from storage.db import Database
 
 
@@ -247,10 +247,20 @@ class DigestWriter:
         if self.include_killed and niche.get("stable_key") in self._killed_fingerprints:
             kill_tag = " 💀 KILLED"
 
+        # W4-1 — saturation header tag for niches above threshold. Read from
+        # breakdown (already applied to rank_score via score_niche penalty);
+        # this is the visible chip on the heading line so saturated niches
+        # can't be mis-scanned as greenfield even when their rank is high.
+        sat_tag = ""
+        sat_bd = breakdown.get("saturation") if isinstance(breakdown, dict) else None
+        if sat_bd and sat_bd.get("score", 0) >= SATURATION_TAG_THRESHOLD:
+            n_tools = sat_bd.get("distinct_count", 0)
+            sat_tag = f" 🚨 RED OCEAN ({n_tools} tools)"
+
         out = [
             f"## {rank}. {niche['label']} — score {effective_rank:.2f} "
             f"(complexity: {complexity_tier}, revenue: {revenue_tier})"
-            f"{mode_tag}{kill_tag}{boost_chip}",
+            f"{sat_tag}{mode_tag}{kill_tag}{boost_chip}",
             f"- Pain: {pain_sentence}",
             f"- Evidence: {niche['post_count']} posts across {niche['sub_count']} subs, "
             f"{recent_count} in last {WINDOW_DAYS}d · {coverage_tag}. "

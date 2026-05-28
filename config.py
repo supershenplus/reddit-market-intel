@@ -465,6 +465,18 @@ COMPLEXITY_SCORE_WEIGHTS = {
     "complexity_keywords": 0.40,
 }
 
+# W4-1 (2026-05-28) — saturation penalty applied multiplicatively to rank.
+# `saturation = 1 - 1/(1 + K · log(1 + n_distinct_tools))` derived from
+# pain_facets.integrations_mentioned + current_solution. Then
+# `rank = (rev/(1+comp)) · max(FLOOR, 1 - saturation)`. The floor caps damage
+# at 50% by default — saturated niches never disappear, just stop dominating.
+# Supersedes 2026-05-25's display-only call (DECISIONS.md): the display chip
+# proved insufficient — Niche #1 (PM software OPS-view) ranked #1 in a
+# 450+-product red ocean. Tunable; rerun `analyze --rescore-niches` after.
+SATURATION_K = 0.3              # decay constant — higher = steeper penalty
+SATURATION_PENALTY_FLOOR = 0.5  # max multiplicative penalty (0.5 = 50% cap)
+SATURATION_TAG_THRESHOLD = 0.30 # digest renders 🚨 RED OCEAN at/above this
+
 # Per-facet confidence is clipped to this range before weighting. Lower
 # bound prevents low-confidence niches from being arbitrarily depressed;
 # upper bound prevents a single confident outlier from dominating ten

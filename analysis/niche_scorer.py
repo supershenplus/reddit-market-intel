@@ -15,16 +15,21 @@ compute_complexity_score call this filter first.
 import json
 import math
 
+from analysis.saturation import compute_saturation_score
 from config import (
     COMPLEXITY_KEYWORDS,
     COMPLEXITY_SCORE_WEIGHTS,
     FACET_CONFIDENCE_CLIP,
     NICHE_MIN_EFFECTIVE_N,
     REVENUE_SCORE_WEIGHTS,
+    SATURATION_K,
+    SATURATION_PENALTY_FLOOR,
 )
 
 
-BREAKDOWN_VERSION = "v1"
+# v2 (2026-05-28): adds saturation key to breakdown + multiplicative penalty
+# on rank. v1 breakdowns remain readable — verdict-parser tolerates drift.
+BREAKDOWN_VERSION = "v2"
 
 _WTP_VALUE = {"would_pay": 1.0, "hesitant": 0.5, "no_signal": 0.0}
 _URGENCY_VALUE = {
@@ -268,19 +273,29 @@ def score_niche(
     if has_enough_facets(facets, cluster_post_count):
         rev, rev_bd = compute_revenue_score(facets)
         comp, comp_bd = compute_complexity_score(facets)
+        # W4-1: saturation penalty (multiplicative, floored). Greenfield
+        # niches (no tools mentioned) get penalty_multiplier=1.0 and rank
+        # is unchanged — additive feature, no behavior change for them.
+        sat_score, sat_bd = compute_saturation_score(
+            facets, SATURATION_K, SATURATION_PENALTY_FLOOR,
+        )
+        rank = (rev / (1 + comp)) * sat_bd["penalty_multiplier"]
         breakdown = {
             "breakdown_version": BREAKDOWN_VERSION,
             "mode": "faceted",
             "revenue": rev_bd,
             "complexity": comp_bd,
+            "saturation": {"score": sat_score, **sat_bd},
         }
         mode = "faceted"
     else:
         # Phase-1 fallback: dumb constant complexity, opportunity-score
-        # average as revenue proxy. Same math as analysis/niches.py:108-111
-        # before Phase 4.
+        # average as revenue proxy. Saturation is NOT applied here — without
+        # facets there's no tool data to derive it from, and using the
+        # fallback path means we're already in low-confidence territory.
         rev = fallback_opportunity_avg
         comp = 0.5
+        rank = rev / (1 + comp)
         breakdown = {
             "breakdown_version": BREAKDOWN_VERSION,
             "mode": "dumb_fallback",
@@ -288,7 +303,6 @@ def score_niche(
             "fallback_opportunity_avg": round(fallback_opportunity_avg, 4),
         }
         mode = "dumb_fallback"
-    rank = rev / (1 + comp)
     return round(rev, 4), round(comp, 4), round(rank, 4), breakdown, mode
 
 

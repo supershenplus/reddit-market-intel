@@ -15,8 +15,21 @@ from sklearn.cluster import KMeans
 from sentence_transformers import SentenceTransformer
 
 from analysis.niche_scorer import best_label_facet, score_niche
+from analysis.saturation import format_saturation_note
 from config import EMBEDDING_MODEL, LLM_PROMPT_VERSION
 from storage.db import Database
+
+
+def _saturation_note_from(breakdown: dict | None) -> str | None:
+    """Extract saturation_note from a score_niche breakdown. Returns None
+    for fallback-mode breakdowns (no saturation key) and for niches with
+    no tool data — both should leave the DB column NULL."""
+    if not isinstance(breakdown, dict):
+        return None
+    sat = breakdown.get("saturation")
+    if not sat:
+        return None
+    return format_saturation_note(sat)
 
 
 STABLE_KEY_TOP_N = 10  # Posts to fingerprint per niche; tradeoff between
@@ -171,7 +184,7 @@ class NicheBuilder:
             "complexity_score": complexity,
             "revenue_score": revenue,
             "rank_score": rank,
-            "saturation_note": None,
+            "saturation_note": _saturation_note_from(breakdown),
             "first_seen": first_seen,
             "last_seen": last_seen,
             "centroid": centroid_vec.astype(np.float32).tobytes(),
@@ -236,6 +249,7 @@ def rescore_existing_niches(db: Database) -> dict:
             niche["id"], label, complexity, revenue, rank,
             json.dumps(breakdown), stable_key=stable_key,
         )
+        db.update_niche_saturation_note(niche["id"], _saturation_note_from(breakdown))
         if mode == "faceted":
             faceted += 1
         else:

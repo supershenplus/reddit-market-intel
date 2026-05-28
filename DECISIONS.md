@@ -241,3 +241,44 @@ architecture.
 **Rejected:** Build despite TAM concerns (would generate ~$750/mo at best, not the $14K/mo
 projected). Pivot immediately to Helldivers 2 (deferred — same TAM check needs to run first).
 Build as portfolio piece only (skip — the user wants income streams, not portfolio).
+
+## 2026-05-28: W4-1 — saturation as multiplicative penalty on rank (reversing 2026-05-25)
+
+**Choice:** `compute_saturation_score(facets, K, FLOOR)` in `analysis/saturation.py`
+returns a 0.0-1.0 log-decay over distinct named tools from `pain_facets.integrations_mentioned`
++ `current_solution`. `score_niche` applies it as `rank = (rev/(1+comp)) * max(FLOOR, 1-saturation)`.
+Defaults `SATURATION_K=0.3`, `SATURATION_PENALTY_FLOOR=0.5` (max 50% rank reduction).
+Digest renders `🚨 RED OCEAN (N tools)` header tag at/above
+`SATURATION_TAG_THRESHOLD=0.30`. `BREAKDOWN_VERSION` bumped to v2.
+
+**Why:** The 2026-05-25 display-only call was made before the failure mode was observed.
+Niche #1 (PM software OPS-view) ranked first at 0.66 in a 450+-product market (per
+Capterra; top-5 vendors only 45% combined share — Yardi, AppFolio, RealPage, Buildium,
+Entrata each holding 5-13%). The display chip was correctly populated but operators
+(both human and AI) ranked the niche anyway because it sat at the top of the list.
+Post-W4-1: same niche scores 0.34, still #1 (highest revenue signal of the corpus
+even after penalty) but the lead over #2 collapsed from 0.17 to 0.05 — now visibly
+contested rather than dominant. Floor of 0.5 directly addresses the 2026-05-25
+concern: a legitimate opportunity in a saturated market still surfaces in top-10.
+
+**Tradeoff acknowledged:** integrations_mentioned conflates competitors with
+complements (Niche #1's "37 distinct tools" includes Zillow, Facebook, personal cell
+phone alongside Buildium/Doorloop). Noise floor estimated 30-50% by raw count, but
+directional signal (saturation > 0 vs = 0) is reliable. Curated `COMPETITORS_BY_DOMAIN`
+overlay deferred to v2.
+
+**Rejected:** UX-only fix (header tag without rank change) — doesn't solve the
+ranking problem; a saturated #1 is still #1. Soft penalty (15%) — too gentle to
+reorder anything since the score gaps between adjacent niches are typically larger
+than 15%. Embed in `COMPLEXITY_SCORE_WEIGHTS` — would double-count
+integrations_mentioned (the existing `integrations_count` complexity component reads
+the same field) and hide saturation inside an averaged sub-score.
+
+**Research:** convergent recommendation from two parallel agents — Agent 1
+(frameworks: HHI/Porter/McKinsey require market-share data we don't have; logarithmic
+decay is the right shape for count-only data) and Agent 2 (shipping comparables:
+indie SaaS-idea validators universally use multiplicative penalty with kill-switch
+floor — MaxKmet, kzeitar, iamvs2002). Agent 3 (PM market landscape: red ocean
+verdict, 450+ products on Capterra) calibrated the verdict expectation.
+
+**Supersedes:** 2026-05-25 "saturation ships display-only with no threshold."
