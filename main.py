@@ -36,6 +36,7 @@ from analysis.market_signals import (
     compute_solution_simplicity,
     compute_market_size_score,
     compute_lienclear_relevance,
+    compute_forza_relevance,
 )
 from analysis.clustering import PainPointClusterer
 from analysis.niches import NicheBuilder
@@ -64,9 +65,20 @@ def cli():
     pass
 
 
-def _scrape_one_subreddit(db, scraper, sub, category, limit, sort, comments):
-    """Scrape one sub + update its metadata. Returns (new_posts, new_comments)."""
+def _scrape_one_subreddit(db, scraper, sub, category, limit, sort, comments, since_ts=None):
+    """Scrape one sub + update its metadata. Returns (new_posts, new_comments).
+
+    If `since_ts` (Unix seconds) is provided, posts older than the cutoff
+    are dropped before insert. Used by `--since YYYY-MM-DD` to scope scrapes
+    to a launch window without changing PRAW/JSON sort behavior."""
     posts = scraper.fetch_posts(sub, limit=limit, sort=sort)
+
+    if since_ts is not None:
+        before = len(posts)
+        posts = [p for p in posts if p.created_utc >= since_ts]
+        dropped = before - len(posts)
+        if dropped:
+            console.print(f"  [dim]Filtered {dropped}/{before} posts before --since cutoff[/dim]")
 
     new_posts = 0
     new_comments = 0
@@ -119,14 +131,35 @@ def _is_scraped_within(last_scraped_iso, cutoff_dt):
     return ts >= cutoff_dt
 
 
+def _parse_since(since: str | None) -> float | None:
+    """Parse --since 'YYYY-MM-DD' to a UTC-midnight Unix timestamp. Returns
+    None if the input is None. Raises click.BadParameter on malformed input."""
+    if not since:
+        return None
+    try:
+        dt = datetime.fromisoformat(since)
+    except ValueError as exc:
+        raise click.BadParameter(
+            f"Invalid --since value {since!r}. Expected YYYY-MM-DD.",
+        ) from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
 @cli.command()
 @click.option("--subreddit", "-s", help="Specific subreddit to scrape")
 @click.option("--category", "-c", help="Scrape all subs in a category (from config)")
 @click.option("--limit", "-l", default=DEFAULT_LIMIT, help="Max posts per subreddit")
 @click.option("--sort", default=DEFAULT_SORT, type=click.Choice(["hot", "new", "top"]))
 @click.option("--comments/--no-comments", default=True, help="Also fetch comment threads")
-def scrape(subreddit, category, limit, sort, comments):
+@click.option(
+    "--since", default=None,
+    help="Drop posts older than YYYY-MM-DD (UTC midnight). E.g. --since 2026-05-19.",
+)
+def scrape(subreddit, category, limit, sort, comments, since):
     """Scrape posts (and optionally comments) from Reddit."""
+    since_ts = _parse_since(since)
     db = Database()
     scraper = get_scraper()
 
@@ -153,7 +186,7 @@ def scrape(subreddit, category, limit, sort, comments):
     for sub in targets:
         console.print(f"\n[bold]Scraping r/{sub} ({sort}, limit={limit})...[/bold]")
         new_posts, new_comments = _scrape_one_subreddit(
-            db, scraper, sub, category, limit, sort, comments,
+            db, scraper, sub, category, limit, sort, comments, since_ts=since_ts,
         )
         total_posts += new_posts
         total_comments += new_comments
@@ -171,8 +204,13 @@ def scrape(subreddit, category, limit, sort, comments):
 @click.option("--limit", "-l", default=DEFAULT_LIMIT, help="Max posts per subreddit")
 @click.option("--sort", default=DEFAULT_SORT, type=click.Choice(["hot", "new", "top"]))
 @click.option("--comments/--no-comments", default=True, help="Also fetch comment threads")
-def scrape_all(max_age_days, limit, sort, comments):
+@click.option(
+    "--since", default=None,
+    help="Drop posts older than YYYY-MM-DD (UTC midnight). E.g. --since 2026-05-19.",
+)
+def scrape_all(max_age_days, limit, sort, comments, since):
     """Scrape every configured subreddit, skipping those scraped within --max-age-days."""
+    since_ts = _parse_since(since)
     db = Database()
     scraper = get_scraper()
 
@@ -201,7 +239,7 @@ def scrape_all(max_age_days, limit, sort, comments):
         console.print(f"\n[bold]Scraping r/{sub} ({category}, {sort}, limit={limit})...[/bold]")
         try:
             new_posts, new_comments = _scrape_one_subreddit(
-                db, scraper, sub, category, limit, sort, comments,
+                db, scraper, sub, category, limit, sort, comments, since_ts=since_ts,
             )
         except Exception as e:
             console.print(f"  [red]Error on r/{sub}: {e}[/red]")
@@ -229,7 +267,7 @@ def scrape_all(max_age_days, limit, sort, comments):
 )
 @click.option(
     "--deep-profile",
-    type=click.Choice(["lienclear"]),
+    type=click.Choice(["lienclear", "forza"]),
     default=None,
     help="Run an optional deep-profile overlay on each classified post "
     "(extracts thesis-specific facets into matched_patterns). "
@@ -290,10 +328,20 @@ def analyze(force, deep_profile, rescore_niches):
                 existing_mp = json.loads(result["matched_patterns"])
             except (TypeError, ValueError, json.JSONDecodeError):
                 existing_mp = []
+            # Fetch subreddit metadata once — both the forza deep-profile and
+            # the market-signals block below need subscribers, and the lienclear
+            # path is unaffected by the early fetch.
+            sub_info = db.get_subreddit_info(post["subreddit"])
+            subscribers = sub_info.get("subscribers", 0) if sub_info else 0
+
             mp_payload = {"intent": existing_mp}
             if deep_profile == "lienclear":
                 mp_payload["lienclear"] = compute_lienclear_relevance(
                     post["title"] or "", post["body"] or "", post["subreddit"]
+                )
+            elif deep_profile == "forza":
+                mp_payload["forza"] = compute_forza_relevance(
+                    post["title"] or "", post["body"] or "", post["subreddit"], subscribers,
                 )
             result["matched_patterns"] = json.dumps(mp_payload)
 
@@ -317,9 +365,7 @@ def analyze(force, deep_profile, rescore_niches):
             validation = compute_validation_score(comments)
             recency = scorer.compute_recency_weight(post["created_utc"])
 
-            # Market signals
-            sub_info = db.get_subreddit_info(post["subreddit"])
-            subscribers = sub_info.get("subscribers", 0) if sub_info else 0
+            # Market signals (uses pre-fetched subscribers)
             mono = compute_monetization_score(post["title"] or "", post["body"] or "", post["subreddit"])
             simplicity = compute_solution_simplicity(post["title"] or "", post["body"] or "")
             mkt_size = compute_market_size_score(subscribers, cross_sub_count=1)
@@ -404,9 +450,10 @@ def discover(from_sub, category):
 @click.option("--min-score", default=0.0, help="Minimum opportunity score threshold")
 @click.option(
     "--profile",
-    type=click.Choice(["default", "lienclear"]),
+    type=click.Choice(["default", "lienclear", "forza"]),
     default="default",
-    help="Report overlay: 'default' (generic SMB) or 'lienclear' (construction lien-waiver SaaS).",
+    help="Report overlay: 'default' (generic SMB), 'lienclear' (construction "
+    "lien-waiver SaaS), or 'forza' (Forza-launch companion-tool gaps).",
 )
 def export(top, output, min_score, profile):
     """Export clustered opportunity report as markdown."""

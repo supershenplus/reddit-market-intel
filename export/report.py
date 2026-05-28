@@ -5,14 +5,22 @@ from collections import Counter
 from datetime import datetime
 
 from storage.db import Database
-from analysis.market_signals import compute_lienclear_relevance, classify_lienclear_phase
+from analysis.market_signals import (
+    compute_lienclear_relevance, classify_lienclear_phase,
+    compute_forza_relevance, classify_forza_topic,
+)
 
 try:
-    from config import PROFILES, LIENCLEAR_COMPETITORS, LIENCLEAR_PHASE_LABELS
+    from config import (
+        PROFILES, LIENCLEAR_COMPETITORS, LIENCLEAR_PHASE_LABELS,
+        FORZA_COMPETITORS, FORZA_TOPIC_LABELS,
+    )
 except ImportError:  # pragma: no cover — defensive for partial configs
     PROFILES = {}
     LIENCLEAR_COMPETITORS = []
     LIENCLEAR_PHASE_LABELS = {}
+    FORZA_COMPETITORS = []
+    FORZA_TOPIC_LABELS = {}
 
 
 class ReportGenerator:
@@ -28,7 +36,7 @@ class ReportGenerator:
         clusters = self.db.get_all_clusters()
         clusters = [c for c in clusters if (c["avg_opportunity_score"] or 0) >= min_score]
 
-        # Lienclear profile: enrich + re-rank by aggregated lienclear_relevance
+        # Profile-aware enrich + re-rank
         domain_section: list[str] = []
         if self.profile == "lienclear":
             min_rel = self.profile_cfg.get("min_relevance", 0.30)
@@ -49,6 +57,22 @@ class ReportGenerator:
             # Domain-hit posts the RAG classifier dropped before clustering —
             # scanned straight from `posts`, independent of the classifier gate.
             domain_section = self._render_domain_hit_section(min_rel, top_n)
+        elif self.profile == "forza":
+            min_rel = self.profile_cfg.get("min_relevance", 0.25)
+            strong_rel = self.profile_cfg.get("strong_relevance", 0.40)
+            min_posts = self.profile_cfg.get("min_cluster_posts", 2)
+            enriched = []
+            for c in clusters:
+                meta = self._aggregate_forza_meta(c["id"])
+                rel = meta["avg_relevance"]
+                if rel >= strong_rel or (rel >= min_rel and (c["post_count"] or 0) >= min_posts):
+                    enriched.append({**c, "_fz": meta})
+            enriched.sort(
+                key=lambda c: (c["_fz"]["avg_relevance"], c["avg_opportunity_score"] or 0),
+                reverse=True,
+            )
+            clusters = enriched[:top_n]
+            domain_section = self._render_forza_domain_section(min_rel, top_n)
         else:
             clusters = clusters[:top_n]
 
@@ -64,13 +88,19 @@ class ReportGenerator:
         ]
         if self.profile == "lienclear":
             lines.append(f"**Profile**: lienclear — ranked by avg lienclear_relevance, min {self.profile_cfg.get('min_relevance', 0.30):.2f}")
+        elif self.profile == "forza":
+            lines.append(f"**Profile**: forza — ranked by avg forza_relevance, min {self.profile_cfg.get('min_relevance', 0.25):.2f}")
         lines.extend(["", "---", ""])
 
-        # Profile-level Competitor Gap section (before clusters)
+        # Profile-level gap section (before clusters)
         if self.profile == "lienclear" and self.profile_cfg.get("include_competitor_gap_section"):
             gap_section = self._render_competitor_gap_section()
             if gap_section:
                 lines.extend(gap_section)
+        elif self.profile == "forza" and self.profile_cfg.get("include_tool_gap_section"):
+            tool_gap = self._render_tool_gap_section(clusters)
+            if tool_gap:
+                lines.extend(tool_gap)
 
         for rank, cluster in enumerate(clusters, 1):
             subreddits = json.loads(cluster["subreddits"]) if cluster["subreddits"] else []
@@ -88,6 +118,17 @@ class ReportGenerator:
                 lc_facets = self._render_lienclear_facets(lc)
                 if lc_facets:
                     lines.extend(lc_facets)
+            elif self.profile == "forza":
+                fz = cluster.get("_fz", {})
+                lines.append(
+                    f"**Forza relevance**: {fz.get('avg_relevance', 0):.2f} | "
+                    f"**Opportunity score**: {cluster['avg_opportunity_score']:.2f} | "
+                    f"**Posts**: {cluster['post_count']}"
+                )
+                lines.append(f"**Subreddits**: {', '.join(subreddits)}")
+                fz_facets = self._render_forza_facets(fz)
+                if fz_facets:
+                    lines.extend(fz_facets)
             else:
                 lines.append(
                     f"**Score**: {cluster['avg_opportunity_score']:.2f} | "
@@ -436,3 +477,243 @@ class ReportGenerator:
                 unique.append((name, reason))
 
         return unique
+
+    # --- Forza profile helpers -----------------------------------------------------
+
+    def _aggregate_forza_meta(self, cluster_id: int) -> dict:
+        """Aggregate per-cluster Forza signal from matched_patterns JSON blobs.
+
+        Mirrors _aggregate_lienclear_meta — reads the `forza` key from each
+        pain_point's matched_patterns and rolls up topic / role / competitor
+        counts, tool-request / DIY / patreon / kill rates, and avg audience
+        reach.
+        """
+        cur = self.db.conn.execute(
+            "SELECT matched_patterns FROM pain_points WHERE cluster_id = ?",
+            (cluster_id,),
+        )
+        canonical = {c.lower(): c for c in FORZA_COMPETITORS}
+        relevances: list[float] = []
+        reaches: list[float] = []
+        topics: Counter = Counter()
+        roles: Counter = Counter()
+        competitors: Counter = Counter()
+        tool_req_hits = 0
+        diy_hits = 0
+        patreon_hits = 0
+        kill_hits = 0
+        domain_hits = 0
+        total = 0
+        for row in cur.fetchall():
+            total += 1
+            blob = row["matched_patterns"]
+            if not blob:
+                continue
+            try:
+                parsed = json.loads(blob)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            fz = parsed.get("forza") if isinstance(parsed, dict) else None
+            if not fz:
+                continue
+            relevances.append(float(fz.get("score") or 0))
+            reach = fz.get("audience_reach")
+            if reach is not None:
+                reaches.append(float(reach))
+            if fz.get("topic") is not None:
+                topics[fz["topic"]] += 1
+            if fz.get("player_role"):
+                roles[fz["player_role"]] += 1
+            for comp in fz.get("competitor_mentions") or []:
+                key = comp.lower()
+                if key in canonical:
+                    competitors[canonical[key]] += 1
+            if fz.get("tool_request_hit"):
+                tool_req_hits += 1
+            if fz.get("diy_hit"):
+                diy_hits += 1
+            if fz.get("patreon_hit"):
+                patreon_hits += 1
+            if fz.get("kill_hit"):
+                kill_hits += 1
+            if fz.get("domain_hit"):
+                domain_hits += 1
+        avg_relevance = sum(relevances) / len(relevances) if relevances else 0.0
+        avg_reach = sum(reaches) / len(reaches) if reaches else 0.0
+        return {
+            "avg_relevance": avg_relevance,
+            "avg_audience_reach": avg_reach,
+            "post_count": total,
+            "domain_hit_rate": (domain_hits / total) if total else 0.0,
+            "tool_request_rate": (tool_req_hits / total) if total else 0.0,
+            "diy_rate": (diy_hits / total) if total else 0.0,
+            "patreon_count": patreon_hits,
+            "kill_count": kill_hits,
+            "topics": topics.most_common(),
+            "roles": roles.most_common(),
+            "competitors": competitors.most_common(),
+        }
+
+    def _render_forza_facets(self, fz: dict) -> list[str]:
+        """Per-cluster Forza facet rendering (parallel to _render_lienclear_facets)."""
+        lines = []
+        if fz.get("topics"):
+            topic_strs = [f"{FORZA_TOPIC_LABELS.get(t, str(t))} ({n})" for t, n in fz["topics"]]
+            lines.append("**Topics**: " + ", ".join(topic_strs))
+        if fz.get("roles"):
+            lines.append("**Player roles**: " + ", ".join(f"{r} ({n})" for r, n in fz["roles"]))
+        if fz.get("competitors"):
+            lines.append("**Competitor mentions**: " + ", ".join(f"{c} ({n})" for c, n in fz["competitors"]))
+        lines.append(f"**Tool-request rate**: {fz.get('tool_request_rate', 0):.0%}")
+        if fz.get("diy_rate", 0) > 0:
+            lines.append(f"**DIY-evidence rate**: {fz.get('diy_rate', 0):.0%}")
+        lines.append(
+            f"**Audience reach (avg)**: {fz.get('avg_audience_reach', 0):.0%} of 500K-sub ceiling"
+        )
+        if fz.get("patreon_count", 0):
+            lines.append(f"**Patreon/tip mentions**: {fz['patreon_count']}")
+        if fz.get("kill_count", 0):
+            rate = fz["kill_count"] / fz["post_count"] if fz.get("post_count") else 0
+            lines.append(
+                f"**⚠ Kill-signal posts**: {fz['kill_count']} ({rate:.0%}) — "
+                "demand pointed at publisher"
+            )
+        return lines
+
+    def _render_tool_gap_section(self, enriched_clusters: list[dict]) -> list[str]:
+        """Tool-Gap section — the headline output for the ad-revenue thesis.
+
+        Lists clusters with high tool-request signal, zero competitor mentions
+        (= no existing tool acknowledged in the discussion), and low kill-signal
+        rate (= demand isn't dominated by "publisher should add this"). Ranks
+        by tool_request_rate × avg_audience_reach so the top of the list is
+        "lots of people asking + ad-viable sub size."
+        """
+        candidates = []
+        for c in enriched_clusters:
+            fz = c.get("_fz") or {}
+            post_count = fz.get("post_count") or 0
+            if post_count == 0:
+                continue
+            kill_rate = (fz.get("kill_count") or 0) / post_count
+            if (
+                fz.get("tool_request_rate", 0) >= 0.40
+                and not fz.get("competitors")
+                and kill_rate < 0.25
+            ):
+                rank_score = fz.get("tool_request_rate", 0) * fz.get("avg_audience_reach", 0)
+                candidates.append((rank_score, c, fz))
+        if not candidates:
+            return []
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        lines = [
+            "## Tool-Gap Opportunities",
+            "",
+            "Clusters where the community is asking for a tool, no existing competitor "
+            "was mentioned, and the demand isn't dominated by \"publisher should add this\" "
+            "complaints. Ranked by tool-request rate × audience reach — top items have the "
+            "highest pageview-per-eyeball potential for an ad-supported web tool.",
+            "",
+        ]
+        for i, (rank_score, c, fz) in enumerate(candidates[:10], 1):
+            subreddits = json.loads(c["subreddits"]) if c["subreddits"] else []
+            lines.append(
+                f"{i}. **{c['label']}** — "
+                f"tool-req {fz['tool_request_rate']:.0%} × reach {fz.get('avg_audience_reach', 0):.0%} "
+                f"= {rank_score:.2f}"
+            )
+            facets = []
+            if fz.get("topics"):
+                facets.append("Topics: " + ", ".join(
+                    FORZA_TOPIC_LABELS.get(t, str(t)) for t, _ in fz["topics"][:2]
+                ))
+            if subreddits:
+                facets.append(
+                    f"r/{subreddits[0]}"
+                    + (f" +{len(subreddits)-1}" if len(subreddits) > 1 else "")
+                )
+            if fz.get("diy_rate", 0) > 0:
+                facets.append(f"DIY {fz['diy_rate']:.0%}")
+            if facets:
+                lines.append(f"   - {' | '.join(facets)}")
+        lines.extend(["", "---", ""])
+        return lines
+
+    def _render_forza_domain_section(self, min_rel: float, top_n: int) -> list[str]:
+        """Posts hitting Forza domain keywords, scored directly via compute_forza_relevance.
+
+        Parallel to _render_domain_hit_section but partitioned by FORZA_TOPIC_LABELS
+        (tuning / cosmetic / online / progression). Recovers domain-hit posts the
+        RAG classifier dropped before clustering — the complete raw Forza signal
+        in the corpus. JOINs subreddits to feed audience_reach into the
+        relevance call (Forza's monetization proxy, unlike lienclear's purely
+        text-based score).
+        """
+        cur = self.db.conn.execute(
+            """SELECT p.reddit_id, p.title, p.body, p.subreddit, p.url, p.score,
+                      COALESCE(s.subscribers, 0) AS subscribers
+               FROM posts p
+               LEFT JOIN subreddits s ON s.name = p.subreddit"""
+        )
+        hits = []
+        for row in cur.fetchall():
+            fz = compute_forza_relevance(
+                row["title"] or "", row["body"] or "",
+                row["subreddit"] or "", row["subscribers"] or 0,
+            )
+            if fz["domain_hit"] and fz["score"] >= min_rel:
+                topic = classify_forza_topic(row["title"] or "", row["body"] or "") or 1
+                hits.append((row, fz, topic))
+        if not hits:
+            return []
+        hits_with_idx = [(h[1]["score"], i, h) for i, h in enumerate(hits)]
+        hits_with_idx.sort(reverse=True)
+        hits = [t[2] for t in hits_with_idx[:top_n]]
+
+        lines = [
+            "## Domain-Hit Posts (Forza)",
+            "",
+            "Posts whose text matches Forza domain keywords (tune/livery/FFB/eventlab/etc), "
+            "scored directly by `compute_forza_relevance` — independent of the generic "
+            "pain-point classifier. Partitioned by topic (highest-topic-wins on multi-hit; "
+            "domain-hit posts with no topic-pattern match default to Tuning).",
+            "",
+        ]
+
+        buckets: dict[int, list] = {1: [], 2: [], 3: [], 4: []}
+        for row, fz, topic in hits:
+            buckets.setdefault(topic, []).append((row, fz))
+
+        for topic in (1, 2, 3, 4):
+            bucket = buckets.get(topic) or []
+            if not bucket:
+                continue
+            label = FORZA_TOPIC_LABELS.get(topic, f"Topic {topic}")
+            lines.append(f"### {label} ({len(bucket)} post{'s' if len(bucket) != 1 else ''})")
+            lines.append("")
+            for i, (row, fz) in enumerate(bucket, 1):
+                title = (row["title"] or "(no title)")[:80]
+                lines.append(
+                    f"{i}. [r/{row['subreddit']}] \"{title}\" — "
+                    f"relevance {fz['score']:.2f} (↑ {row['score'] or 0})"
+                )
+                facets = []
+                if fz.get("player_role"):
+                    facets.append(f"Role: {fz['player_role']}")
+                if fz.get("competitor_mentions"):
+                    facets.append("Competitors: " + ", ".join(fz["competitor_mentions"]))
+                if fz.get("tool_request_hit"):
+                    facets.append("Tool-request")
+                if fz.get("diy_hit"):
+                    facets.append("DIY")
+                if fz.get("patreon_hit"):
+                    facets.append("Patreon-hint")
+                if fz.get("kill_hit"):
+                    facets.append("⚠ kill-signal")
+                if facets:
+                    lines.append(f"   - {' | '.join(facets)}")
+                lines.append(f"   - URL: {row['url'] or 'N/A'}")
+            lines.append("")
+
+        lines.extend(["---", ""])
+        return lines
