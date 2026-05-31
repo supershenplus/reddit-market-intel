@@ -14,7 +14,11 @@ from datetime import date
 from analysis.niche_scorer import filter_eligible
 from analysis.saturation import compute_saturation
 from analysis.taste import compute_taste_boost, hint_when_n_eq_1
-from config import LLM_PROMPT_VERSION, SATURATION_TAG_THRESHOLD
+from config import (
+    LLM_PROMPT_VERSION,
+    MIN_BUYER_EVIDENCE,
+    SATURATION_TAG_THRESHOLD,
+)
 from storage.db import Database
 
 
@@ -170,7 +174,7 @@ class DigestWriter:
                 f"## {rank}. {niche['label']} — score {niche['rank_score']:.2f} "
                 f"(no member posts){kill_tag}",
                 "",
-                f"- [ ] build  [ ] watch  [ ] kill   notes: ___",
+                "- [ ] build  [ ] watch  [ ] kill   notes: ___",
                 f"- fingerprint: {niche.get('stable_key') or '(missing — re-run analyze)'}",
             ]
 
@@ -257,10 +261,32 @@ class DigestWriter:
             n_tools = sat_bd.get("distinct_count", 0)
             sat_tag = f" 🚨 RED OCEAN ({n_tools} tools)"
 
+        # v3 — buyer-side validation gate header tag + (for unvalidated) hard
+        # block. Read from breakdown (penalty already applied to rank_score via
+        # score_niche). gate_state is 'pass' | 'operator_only' | 'unvalidated'.
+        buyer_tag = ""
+        buyer_banner = ""
+        build_blocked = False
+        buyer_bd = breakdown.get("buyer_side") if isinstance(breakdown, dict) else None
+        if buyer_bd:
+            state = buyer_bd.get("gate_state")
+            if state == "unvalidated":
+                build_blocked = True
+                wp = buyer_bd.get("buyer_wp_count", 0)
+                buyer_tag = " ⛔ UNVALIDATED"
+                buyer_banner = (
+                    f"- ⛔ GATE: {wp} owner-side would-pay facet(s) "
+                    f"(need ≥{MIN_BUYER_EVIDENCE}). Build BLOCKED — validate "
+                    f"buyer-side before scoping."
+                )
+            elif state == "operator_only":
+                pct = buyer_bd.get("buyer_ratio", 0.0)
+                buyer_tag = f" 🚩 OPERATOR-ONLY ({pct:.0%} buyer-side)"
+
         out = [
             f"## {rank}. {niche['label']} — score {effective_rank:.2f} "
             f"(complexity: {complexity_tier}, revenue: {revenue_tier})"
-            f"{sat_tag}{mode_tag}{kill_tag}{boost_chip}",
+            f"{sat_tag}{buyer_tag}{mode_tag}{kill_tag}{boost_chip}",
             f"- Pain: {pain_sentence}",
             f"- Evidence: {niche['post_count']} posts across {niche['sub_count']} subs, "
             f"{recent_count} in last {WINDOW_DAYS}d · {coverage_tag}. "
@@ -268,14 +294,23 @@ class DigestWriter:
             f"- Willingness-to-pay signals: {wtp_line}",
             f"- Build complexity rationale: {complexity_line}",
         ]
+        if buyer_banner:
+            out.append(buyer_banner)
         if sat_line:
             out.append(sat_line)
         if watch_line:
             out.append(watch_line)
+        # Hard gate: suppress the wedge suggestion + build affordance when the
+        # niche is buyer-side unvalidated. watch/kill stay available.
+        wedge_note = (
+            "BLOCKED — run buyer-side validation, then re-extract facets"
+            if build_blocked else PHASE5_WEDGE_NOTE
+        )
+        build_box = "~~build~~ (blocked)" if build_blocked else "[ ] build"
         out.extend([
-            f"- Suggested wedge: {PHASE5_WEDGE_NOTE}",
+            f"- Suggested wedge: {wedge_note}",
             "",
-            f"- [ ] build  [ ] watch  [ ] kill   notes: ___",
+            f"- {build_box}  [ ] watch  [ ] kill   notes: ___",
             f"- fingerprint: {niche.get('stable_key') or '(missing — re-run analyze)'}",
         ])
         return out
@@ -299,11 +334,9 @@ class DigestWriter:
             delta_f = current_facet_count - snap["facet_count"]
             if delta_f:
                 parts.append(f"{delta_f:+d} facets")
-        snap_anchor = snap.get("max_dollar_anchor") or 0
-        # Pulled from the score_breakdown JSON at watch time
-        snap_max = snap_anchor if snap_anchor else None
-        # Note: current max is read from current facets; intentionally not
-        # re-computed here to keep the row cheap. Phase 6/7 may revisit.
+        # Note: max_dollar_anchor delta intentionally not re-computed here to
+        # keep the row cheap (current max would require re-reading facets).
+        # Phase 6/7 may revisit.
         if not parts:
             return f"- Watching since {decided_at[:10]}: no growth yet"
         return f"- Watching since {decided_at[:10]}: " + ", ".join(parts)

@@ -15,11 +15,17 @@ compute_complexity_score call this filter first.
 import json
 import math
 
+from analysis.buyer_side import compute_buyer_side_score
 from analysis.saturation import compute_saturation_score
 from config import (
+    BUYER_SIDE_BUYER_ROLES,
+    BUYER_SIDE_OPERATOR_ROLES,
+    BUYER_SIDE_PENALTY_FLOOR,
+    BUYER_SIDE_TAG_THRESHOLD,
     COMPLEXITY_KEYWORDS,
     COMPLEXITY_SCORE_WEIGHTS,
     FACET_CONFIDENCE_CLIP,
+    MIN_BUYER_EVIDENCE,
     NICHE_MIN_EFFECTIVE_N,
     REVENUE_SCORE_WEIGHTS,
     SATURATION_K,
@@ -29,7 +35,9 @@ from config import (
 
 # v2 (2026-05-28): adds saturation key to breakdown + multiplicative penalty
 # on rank. v1 breakdowns remain readable — verdict-parser tolerates drift.
-BREAKDOWN_VERSION = "v2"
+# v3 (2026-05-31): adds buyer_side entry + second multiplicative penalty (the
+# buyer-side validation gate). Older breakdowns still parse.
+BREAKDOWN_VERSION = "v3"
 
 _WTP_VALUE = {"would_pay": 1.0, "hesitant": 0.5, "no_signal": 0.0}
 _URGENCY_VALUE = {
@@ -279,13 +287,26 @@ def score_niche(
         sat_score, sat_bd = compute_saturation_score(
             facets, SATURATION_K, SATURATION_PENALTY_FLOOR,
         )
-        rank = (rev / (1 + comp)) * sat_bd["penalty_multiplier"]
+        # Buyer-side validation gate (v3): second multiplicative penalty.
+        # Operator-dominated niches get demoted; owner/greenfield niches get
+        # penalty 1.0 and rank is unchanged — additive, like saturation.
+        buyer_score, buyer_bd = compute_buyer_side_score(
+            facets, BUYER_SIDE_PENALTY_FLOOR, MIN_BUYER_EVIDENCE,
+            BUYER_SIDE_BUYER_ROLES, BUYER_SIDE_OPERATOR_ROLES,
+            BUYER_SIDE_TAG_THRESHOLD,
+        )
+        rank = (
+            (rev / (1 + comp))
+            * sat_bd["penalty_multiplier"]
+            * buyer_bd["penalty_multiplier"]
+        )
         breakdown = {
             "breakdown_version": BREAKDOWN_VERSION,
             "mode": "faceted",
             "revenue": rev_bd,
             "complexity": comp_bd,
             "saturation": {"score": sat_score, **sat_bd},
+            "buyer_side": {"score": buyer_score, **buyer_bd},
         }
         mode = "faceted"
     else:

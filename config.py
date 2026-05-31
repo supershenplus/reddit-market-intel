@@ -93,6 +93,20 @@ SEED_SUBREDDITS = {
         "forza", "ForzaHorizon", "forzahorizon6", "forzahorizon5",
         "ForzaMotorsport", "forzahorizon4", "simracing",
     ],
+    # 2026-05-31 green-field re-aim: poster=buyer, under-tooled, verbal signal,
+    # money present. Deliberately OUTSIDE the saturated B2B-SMB-tools cluster
+    # that produced 3 straight saturation/buyer-side kills (Niche #1, lienclear).
+    # Unknown sub names 404-skip in the scraper, so over-inclusion is safe.
+    "regulated_solo": [
+        "Notary", "homeinspection", "appraisal", "RealEstateAppraisal",
+        "freightbrokers", "CourtReporting", "ClaimsAdjuster",
+        "privateinvestigator", "privateinvestigation", "processservers",
+    ],
+    "physical_operators": [
+        "foodtrucks", "selfstorage", "vending", "VendingMachines",
+        "Laundromats", "laundromat", "weddingphotography", "Catering",
+        "eventplanning",
+    ],
 }
 
 # Scoring weights (must sum to 1.0)
@@ -476,6 +490,25 @@ COMPLEXITY_SCORE_WEIGHTS = {
 SATURATION_K = 0.3              # decay constant — higher = steeper penalty
 SATURATION_PENALTY_FLOOR = 0.5  # max multiplicative penalty (0.5 = 50% cap)
 SATURATION_TAG_THRESHOLD = 0.30 # digest renders 🚨 RED OCEAN at/above this
+
+# ---------------------------------------------------------------------------
+# Buyer-side validation gate (2026-05-31) — the lienclear lesson, hardcoded.
+# Three straight top-niche kills (Niche #1, lienclear, the 2026-05-31 digest)
+# died because the pain-posters were OPERATORS (employees/PMs who feel the
+# pain) while OWNERS control spend — so the `would_pay` signal was contaminated
+# (see [[feedback-buyer-side-validation-mandatory]],
+# [[feedback-construction-buyer-operator-split]]). Mirrors the W4-1 saturation
+# pattern: a multiplicative rank penalty + digest tag, plus a HARD ⛔ block when
+# buyer-side would-pay evidence is too thin to scope a build. Reads
+# pain_facets.buyer_role + willingness_to_pay. Tunable; rerun
+# `analyze --rescore-niches` (or any digest) after changing.
+BUYER_SIDE_PENALTY_FLOOR = 0.5  # max multiplicative penalty (0.5 = 50% cap)
+BUYER_SIDE_TAG_THRESHOLD = 0.40 # buyer_ratio below this → 🚩 OPERATOR-ONLY tag
+MIN_BUYER_EVIDENCE = 3          # owner/finance would-pay facets to clear the ⛔
+                                # hard gate — ties to the "3+ owner paid pilots"
+                                # rule in [[feedback-buyer-side-validation-mandatory]]
+BUYER_SIDE_BUYER_ROLES = {"owner", "finance"}        # control the spend
+BUYER_SIDE_OPERATOR_ROLES = {"individual_contributor", "manager"}  # feel the pain
 
 # Per-facet confidence is clipped to this range before weighting. Lower
 # bound prevents low-confidence niches from being arbitrarily depressed;
