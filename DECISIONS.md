@@ -315,3 +315,44 @@ buyer-side test is cheap relative to its information value.
 
 **Supersedes pricing pitch in [[lienclear-v3-thesis]]** — the $49/$149/$349 structure can stay
 as packaging but is no longer the primary positioning differentiator.
+
+## 2026-05-31: Lienclear killed; signal rethink (buyer-side gate → latent-demand → v0.2); green-field thesis closed
+
+**Choice:** After the user killed lienclear, re-aimed RIM at fresh green-field verticals
+(`regulated_solo` + `physical_operators` SEED categories) and ran a three-feature signal
+rethink to chase the off-diagonal (demand present, market under-tooled):
+1. **Buyer-side validation gate** (`analysis/buyer_side.py`, `69aaf3b`) — `compute_buyer_side_score`
+   reads `buyer_role` + `willingness_to_pay`, applies a floored multiplicative rank penalty
+   (mirrors W4-1 saturation), and renders a TIERED digest gate: ⛔ UNVALIDATED (hard-blocks the
+   build affordance below `MIN_BUYER_EVIDENCE=3` owner/finance would-pay facets) / 🚩 OPERATOR-ONLY
+   (soft penalty below `BUYER_SIDE_TAG_THRESHOLD=0.40` buyer_ratio) / pass. BREAKDOWN_VERSION v3.
+2. **Latent-demand signal** (`analysis/latent_demand.py`, `18e8c82`) — DISPLAY-ONLY behavioral-WTP
+   blend, plus a digest "green-field candidates" section scanning CLUSTERS (not the k=15 meta-niches)
+   for high latent demand × low saturation. BREAKDOWN_VERSION v4.
+3. **v0.2 behavioral facets** (`142e4ae`) — added `workaround_effort` / `time_cost` /
+   `solution_seeking` to the LLM schema (migration 0006a-c), `LLM_PROMPT_VERSION` v0.2, and a
+   version-fallback reader (`get_facets_for_cluster_best_version`) so a green-field-only re-facet
+   coexists with the untouched v0.1 corpus. Re-faceted 438 green-field posts.
+
+**Why:** Three straight kills (Niche #1, lienclear, the 2026-05-31 digest) shared one failure mode —
+operators feel the pain, owners control spend, and would_pay is verbalized only in saturated
+SaaS-literate markets. Hardcoding the lesson (buyer-side gate) makes the tool enforce it. The
+latent-demand + v0.2 rethink tested whether behavioral demand hides in the would_pay blindspot.
+**Result: it does NOT (for this corpus).** v0.2 densified the behavioral signal hugely (81 manual +
+7 hired workaround signals vs ~26 from the v0.1 substring match) — but latent demand CORRELATES with
+saturation: every green-field cluster with high demand is also tooled, the off-diagonal is empty,
+and would_pay stays ~0. The green-field-via-operator-subs thesis is closed by empirical negative.
+
+**Rejected:** (i) Leave the buyer-side lesson in CLAUDE.md/memory — depends on the operator
+remembering it; the whole point was tool enforcement. (ii) Soft-only or hard-only buyer gate —
+tiered is faithful to the lesson without hiding legit early niches. (iii) Make latent-demand a rank
+effect immediately — display-only-first mirrors saturation's proven rollout and avoids recalibrating
+every niche before validation (and the experiment proved there's nothing to rank up). (iv) Full
+2036-post v0.2 re-facet — green-field-only (438) with a version-fallback reader validated the thesis
+at ~1/4 the cost. (v) Re-run more operator-vertical scrapes — the off-diagonal correlation is
+structural, not a sampling artifact.
+
+**Supersedes** the lienclear active workstream entirely. RIM now reads as a strong KILL/validation
+instrument rather than a green-field generator; the open question is a genuinely different discovery
+axis (WTP-literate-but-under-tooled) vs feeding RIM an externally-sourced thesis. See
+[[feedback-greenfield-wtp-absent]].
