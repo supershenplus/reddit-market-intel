@@ -98,14 +98,22 @@ SEED_SUBREDDITS = {
     # that produced 3 straight saturation/buyer-side kills (Niche #1, lienclear).
     # Unknown sub names 404-skip in the scraper, so over-inclusion is safe.
     "regulated_solo": [
-        "Notary", "homeinspection", "appraisal", "RealEstateAppraisal",
-        "freightbrokers", "CourtReporting", "ClaimsAdjuster",
-        "privateinvestigator", "privateinvestigation", "processservers",
+        "Notary", "homeinspection", "Homeinspections", "appraisal",
+        "RealEstateAppraisal", "freightbrokers", "CourtReporting",
+        "ClaimsAdjuster", "privateinvestigator", "privateinvestigation",
+        "processservers",
     ],
     "physical_operators": [
         "foodtrucks", "selfstorage", "vending", "VendingMachines",
         "Laundromats", "laundromat", "weddingphotography", "Catering",
         "eventplanning",
+    ],
+    # 2026-05-31 focused probe: the two under-tooled (1-competitor) green-field
+    # candidates from the first gate pass. Deep-scraped to test whether would_pay
+    # evidence materializes with volume or stays absent (see
+    # [[feedback-greenfield-wtp-absent]]). Transient — fold into the verdict.
+    "probe_inspect_claims": [
+        "homeinspection", "Homeinspections", "ClaimsAdjuster",
     ],
 }
 
@@ -509,6 +517,37 @@ MIN_BUYER_EVIDENCE = 3          # owner/finance would-pay facets to clear the �
                                 # rule in [[feedback-buyer-side-validation-mandatory]]
 BUYER_SIDE_BUYER_ROLES = {"owner", "finance"}        # control the spend
 BUYER_SIDE_OPERATOR_ROLES = {"individual_contributor", "manager"}  # feel the pain
+
+# ---------------------------------------------------------------------------
+# Latent-demand signal (2026-05-31) — behavioral WTP, display-only.
+# The 2026-05-31 green-field probe proved verbalized would_pay is ~0 in
+# under-tooled operator markets (they vent pain but don't tool-shop —
+# [[feedback-greenfield-wtp-absent]]). But the same posts reveal demand
+# BEHAVIORALLY: a manual/labor workaround in current_solution ("spreadsheet",
+# "by hand", "hired someone") = already paying in effort; recurring/blocking
+# urgency = ongoing pain; a $ anchor = economic magnitude. Those are captured
+# in pain_facets but feed the opportunity score nowhere (current_solution is
+# read only by saturation, to EXCLUDE tools). This signal mines them to detect
+# the OFF-DIAGONAL: high latent demand + low saturation = the green-field
+# quadrant the would_pay-driven scorer is blind to. DISPLAY-ONLY this pass (no
+# rank effect), mirroring how saturation shipped before W4-1.
+LATENT_DEMAND_WEIGHTS = {       # must sum to 1.0 so the score lands in [0,1]
+    "manual_workaround": 0.5,   # strongest behavioral signal (effort = revealed WTP)
+    "urgency":           0.3,
+    "dollar_present":    0.2,
+}
+LATENT_DEMAND_TAG_THRESHOLD = 0.40   # 💡 tag + green-field eligibility floor
+GREENFIELD_SATURATION_CEILING = 0.20 # saturation must be BELOW this for off-diagonal
+GREENFIELD_MIN_FACETS = 3            # min eligible pain-facets for the green-field scan
+# Manual/labor workarounds = POSITIVE demand (author invests effort/money on the
+# problem). Substring-matched against current_solution. Deliberately SEPARATE from
+# saturation._NON_TOOL_SOLUTIONS: "nothing/none" is genuine no-signal and is NOT
+# here. The split is the crux — "I do it manually" != "I do nothing".
+MANUAL_WORKAROUND_TERMS = {
+    "spreadsheet", "excel", "google sheet", "manual", "by hand",
+    "pen and paper", "paper", "notebook", "hired", "outsourc",
+    "virtual assistant", "assistant", "whiteboard", "sticky note",
+}
 
 # Per-facet confidence is clipped to this range before weighting. Lower
 # bound prevents low-confidence niches from being arbitrarily depressed;

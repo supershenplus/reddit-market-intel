@@ -11,12 +11,25 @@ import re
 import time
 from datetime import date
 
+from analysis.buyer_side import compute_buyer_side_score
+from analysis.latent_demand import compute_latent_demand_score
 from analysis.niche_scorer import filter_eligible
-from analysis.saturation import compute_saturation
+from analysis.saturation import compute_saturation, compute_saturation_score
 from analysis.taste import compute_taste_boost, hint_when_n_eq_1
 from config import (
+    BUYER_SIDE_BUYER_ROLES,
+    BUYER_SIDE_OPERATOR_ROLES,
+    BUYER_SIDE_PENALTY_FLOOR,
+    BUYER_SIDE_TAG_THRESHOLD,
+    GREENFIELD_MIN_FACETS,
+    GREENFIELD_SATURATION_CEILING,
+    LATENT_DEMAND_TAG_THRESHOLD,
+    LATENT_DEMAND_WEIGHTS,
     LLM_PROMPT_VERSION,
+    MANUAL_WORKAROUND_TERMS,
     MIN_BUYER_EVIDENCE,
+    SATURATION_K,
+    SATURATION_PENALTY_FLOOR,
     SATURATION_TAG_THRESHOLD,
 )
 from storage.db import Database
@@ -137,7 +150,79 @@ class DigestWriter:
         for i, n in enumerate(niches, 1):
             lines.extend(self._render_niche(i, n, rev_lo, rev_hi))
             lines.append("")
+        # v4 — off-diagonal green-field scan (display-only). Appended after the
+        # rank-ordered top-N because these clusters rank LOW (the would_pay-driven
+        # score buries them) yet may be the real opportunities.
+        lines.extend(self._greenfield_section())
+        lines.append("")
         return "\n".join(lines)
+
+    def _greenfield_section(self) -> list[str]:
+        """Off-diagonal scan (v4, display-only): clusters with high latent demand
+        AND low saturation — the green-field quadrant the would_pay-driven rank is
+        blind to. Operates on CLUSTERS, not meta-niches, because the k=15
+        meta-clustering dilutes fresh niches below the top-N."""
+        heading = (
+            "## 🟢 Green-field candidates "
+            "(off-diagonal: latent demand × low saturation)"
+        )
+        candidates = []
+        for cl in self.db.get_clusters_for_niching(min_post_count=GREENFIELD_MIN_FACETS):
+            facets = self.db.get_facets_for_cluster_at_version(
+                cl["id"], LLM_PROMPT_VERSION,
+            )
+            eligible = filter_eligible(facets)
+            if len(eligible) < GREENFIELD_MIN_FACETS:
+                continue
+            ld, ld_bd = compute_latent_demand_score(
+                facets, LATENT_DEMAND_WEIGHTS, MANUAL_WORKAROUND_TERMS,
+            )
+            if ld < LATENT_DEMAND_TAG_THRESHOLD:
+                continue
+            sat, sat_bd = compute_saturation_score(
+                facets, SATURATION_K, SATURATION_PENALTY_FLOOR,
+            )
+            if sat >= GREENFIELD_SATURATION_CEILING:
+                continue
+            _br, buyer_bd = compute_buyer_side_score(
+                facets, BUYER_SIDE_PENALTY_FLOOR, MIN_BUYER_EVIDENCE,
+                BUYER_SIDE_BUYER_ROLES, BUYER_SIDE_OPERATOR_ROLES,
+                BUYER_SIDE_TAG_THRESHOLD,
+            )
+            candidates.append((ld, cl, ld_bd, sat_bd, buyer_bd, len(eligible)))
+
+        if not candidates:
+            return [
+                heading,
+                "",
+                "_None this run — no low-saturation cluster cleared the "
+                "latent-demand threshold. If the corpus is operator-heavy, latent "
+                "demand may not be verbally captured either (→ Tier 2 behavioral "
+                "extraction)._",
+            ]
+
+        candidates = _sort_by(candidates, lambda c: c[0])[:10]
+        lines = [
+            heading,
+            "",
+            "_Display-only (no rank effect). Clusters with behavioral demand "
+            "signal but few competing tools — the quadrant the would_pay-driven "
+            "rank misses. Buyer-gate state shown so WTP-validation status is "
+            "visible at a glance._",
+            "",
+        ]
+        for ld, cl, ld_bd, sat_bd, buyer_bd, n in candidates:
+            label = (cl.get("label") or "(unlabeled)").strip()
+            gate = buyer_bd.get("gate_state", "?")
+            lines.append(
+                f"- **{label[:70]}** — latent-demand {ld:.2f} "
+                f"(manual {ld_bd['manual_count']}/{n}, "
+                f"urgency {ld_bd['urgency_mean']:.2f}, "
+                f"$ {ld_bd['dollar_present_frac']:.0%}) · "
+                f"saturation {sat_bd['distinct_count']} tools · "
+                f"buyer-gate: {gate}"
+            )
+        return lines
 
     def _corpus_coverage(self) -> tuple[int, int]:
         total_posts = self.db.conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0]
@@ -283,10 +368,22 @@ class DigestWriter:
                 pct = buyer_bd.get("buyer_ratio", 0.0)
                 buyer_tag = f" 🚩 OPERATOR-ONLY ({pct:.0%} buyer-side)"
 
+        # v4 — latent-demand tag (DISPLAY-ONLY, no rank effect). 💡 when the
+        # behavioral-demand signal is high; upgrades to 🟢 GREEN-FIELD CANDIDATE
+        # on the off-diagonal (high latent demand AND low saturation).
+        ld_tag = ""
+        ld_bd = breakdown.get("latent_demand") if isinstance(breakdown, dict) else None
+        if ld_bd and ld_bd.get("score", 0) >= LATENT_DEMAND_TAG_THRESHOLD:
+            sat_score = sat_bd.get("score", 0) if sat_bd else 0
+            if sat_score < GREENFIELD_SATURATION_CEILING:
+                ld_tag = " 🟢 GREEN-FIELD CANDIDATE"
+            else:
+                ld_tag = " 💡 LATENT DEMAND"
+
         out = [
             f"## {rank}. {niche['label']} — score {effective_rank:.2f} "
             f"(complexity: {complexity_tier}, revenue: {revenue_tier})"
-            f"{sat_tag}{buyer_tag}{mode_tag}{kill_tag}{boost_chip}",
+            f"{sat_tag}{buyer_tag}{ld_tag}{mode_tag}{kill_tag}{boost_chip}",
             f"- Pain: {pain_sentence}",
             f"- Evidence: {niche['post_count']} posts across {niche['sub_count']} subs, "
             f"{recent_count} in last {WINDOW_DAYS}d · {coverage_tag}. "

@@ -16,6 +16,7 @@ import json
 import math
 
 from analysis.buyer_side import compute_buyer_side_score
+from analysis.latent_demand import compute_latent_demand_score
 from analysis.saturation import compute_saturation_score
 from config import (
     BUYER_SIDE_BUYER_ROLES,
@@ -25,6 +26,8 @@ from config import (
     COMPLEXITY_KEYWORDS,
     COMPLEXITY_SCORE_WEIGHTS,
     FACET_CONFIDENCE_CLIP,
+    LATENT_DEMAND_WEIGHTS,
+    MANUAL_WORKAROUND_TERMS,
     MIN_BUYER_EVIDENCE,
     NICHE_MIN_EFFECTIVE_N,
     REVENUE_SCORE_WEIGHTS,
@@ -37,7 +40,9 @@ from config import (
 # on rank. v1 breakdowns remain readable — verdict-parser tolerates drift.
 # v3 (2026-05-31): adds buyer_side entry + second multiplicative penalty (the
 # buyer-side validation gate). Older breakdowns still parse.
-BREAKDOWN_VERSION = "v3"
+# v4 (2026-05-31): adds latent_demand entry (DISPLAY-ONLY — does NOT affect
+# rank). Behavioral-demand signal for off-diagonal detection in the digest.
+BREAKDOWN_VERSION = "v4"
 
 _WTP_VALUE = {"would_pay": 1.0, "hesitant": 0.5, "no_signal": 0.0}
 _URGENCY_VALUE = {
@@ -300,6 +305,11 @@ def score_niche(
             * sat_bd["penalty_multiplier"]
             * buyer_bd["penalty_multiplier"]
         )
+        # Latent-demand signal (v4): DISPLAY-ONLY — added to the breakdown for
+        # the digest's off-diagonal detection, NOT applied to rank this pass.
+        ld_score, ld_bd = compute_latent_demand_score(
+            facets, LATENT_DEMAND_WEIGHTS, MANUAL_WORKAROUND_TERMS,
+        )
         breakdown = {
             "breakdown_version": BREAKDOWN_VERSION,
             "mode": "faceted",
@@ -307,6 +317,7 @@ def score_niche(
             "complexity": comp_bd,
             "saturation": {"score": sat_score, **sat_bd},
             "buyer_side": {"score": buyer_score, **buyer_bd},
+            "latent_demand": {"score": ld_score, **ld_bd},
         }
         mode = "faceted"
     else:
