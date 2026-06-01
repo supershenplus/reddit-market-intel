@@ -71,6 +71,18 @@ MIGRATIONS = [
         CREATE UNIQUE INDEX IF NOT EXISTS idx_verdicts_unique
             ON verdicts(subject_fingerprint, decision, date(decided_at));
     """),
+    # v0.2 behavioral-WTP facets (2026-05-31). One ALTER per entry; the
+    # duplicate-column catch in _run_migrations handles fresh DBs where
+    # schema.sql already created these columns.
+    ("0006a_facets_add_workaround_effort", """
+        ALTER TABLE pain_facets ADD COLUMN workaround_effort TEXT;
+    """),
+    ("0006b_facets_add_time_cost", """
+        ALTER TABLE pain_facets ADD COLUMN time_cost TEXT;
+    """),
+    ("0006c_facets_add_solution_seeking", """
+        ALTER TABLE pain_facets ADD COLUMN solution_seeking TEXT;
+    """),
 ]
 
 
@@ -504,18 +516,25 @@ class Database:
     def upsert_pain_facet(self, facet: dict):
         """UPSERT keyed on (post_id, prompt_version). Idempotent under
         re-import; the operator can replay a batch with no duplicate rows."""
+        # v0.2 fields are nullable additions — default them so dict-based callers
+        # built against the older schema (tests, legacy import paths) don't break
+        # on the named-parameter binding.
+        for _k in ("workaround_effort", "time_cost", "solution_seeking"):
+            facet.setdefault(_k, None)
         self.conn.execute(
             """INSERT INTO pain_facets (
                 post_id, prompt_version, is_pain_point, pain_summary, domain,
                 current_solution, integrations_mentioned, dollar_anchors,
                 max_dollar_anchor, willingness_to_pay, urgency, buyer_role,
-                market_size_signal, confidence, raw_response, model,
+                market_size_signal, workaround_effort, time_cost, solution_seeking,
+                confidence, raw_response, model,
                 input_tokens, output_tokens, mode, prefilter_source
             ) VALUES (
                 :post_id, :prompt_version, :is_pain_point, :pain_summary, :domain,
                 :current_solution, :integrations_mentioned, :dollar_anchors,
                 :max_dollar_anchor, :willingness_to_pay, :urgency, :buyer_role,
-                :market_size_signal, :confidence, :raw_response, :model,
+                :market_size_signal, :workaround_effort, :time_cost, :solution_seeking,
+                :confidence, :raw_response, :model,
                 :input_tokens, :output_tokens, :mode, :prefilter_source
             )
             ON CONFLICT(post_id, prompt_version) DO UPDATE SET
@@ -530,6 +549,9 @@ class Database:
                 urgency = excluded.urgency,
                 buyer_role = excluded.buyer_role,
                 market_size_signal = excluded.market_size_signal,
+                workaround_effort = excluded.workaround_effort,
+                time_cost = excluded.time_cost,
+                solution_seeking = excluded.solution_seeking,
                 confidence = excluded.confidence,
                 raw_response = excluded.raw_response,
                 model = excluded.model,
@@ -573,23 +595,44 @@ class Database:
         )
         return [dict(r) for r in cur.fetchall()]
 
-    def get_pain_points_for_cluster_unvetoed(
-        self, cluster_id: int, prompt_version: str,
-    ) -> list[dict]:
-        """Cluster members filtered by the LLM veto: pain_points with a
-        current-version pain_facet of is_pain_point=0 are excluded.
-        Pain_points with no facet at all are INCLUDED (backwards compatibility
-        with pre-Phase-3 state — facets are additive, not required)."""
+    def get_facets_for_cluster_best_version(self, cluster_id: int) -> list[dict]:
+        """Like get_facets_for_cluster_at_version but version-agnostic: returns,
+        per post, the facet at the HIGHEST prompt_version present. Lets a
+        partial re-facet (e.g. green-field at v0.2) coexist with an untouched
+        v0.1 corpus — each post resolves to its newest facet, so scoring never
+        falls back to the dumb scorer just because the global version bumped."""
+        cur = self.conn.execute(
+            """SELECT pf.* FROM pain_facets pf
+               JOIN pain_points pp ON pp.post_id = pf.post_id
+               WHERE pp.cluster_id = ?
+                 AND pf.prompt_version = (
+                     SELECT MAX(pf2.prompt_version) FROM pain_facets pf2
+                     WHERE pf2.post_id = pf.post_id
+                 )""",
+            (cluster_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_pain_points_for_cluster_unvetoed(self, cluster_id: int) -> list[dict]:
+        """Cluster members filtered by the LLM veto: pain_points whose BEST-version
+        pain_facet is is_pain_point=0 are excluded. Pain_points with no facet at
+        all are INCLUDED (backwards compatibility with pre-Phase-3 state — facets
+        are additive, not required). Best-version (not a fixed prompt_version) so a
+        partial re-facet doesn't silently un-veto the untouched corpus."""
         cur = self.conn.execute(
             """SELECT pp.*, p.title, p.body, p.subreddit, p.url,
                       p.score AS reddit_score, p.num_comments, p.created_utc
                FROM pain_points pp
                JOIN posts p ON pp.post_id = p.id
                LEFT JOIN pain_facets pf
-                 ON pf.post_id = p.id AND pf.prompt_version = ?
+                 ON pf.post_id = p.id
+                 AND pf.prompt_version = (
+                     SELECT MAX(pf2.prompt_version) FROM pain_facets pf2
+                     WHERE pf2.post_id = p.id
+                 )
                WHERE pp.cluster_id = ?
                  AND (pf.is_pain_point IS NULL OR pf.is_pain_point = 1)""",
-            (prompt_version, cluster_id),
+            (cluster_id,),
         )
         return [dict(r) for r in cur.fetchall()]
 

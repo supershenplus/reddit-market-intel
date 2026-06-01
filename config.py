@@ -458,7 +458,11 @@ LLM_RAG_PREFILTER = True
 # changes; pain_facets rows store the version they were extracted under
 # so re-extraction targets only stale rows. Without this guard a single
 # prompt tweak triggers a full-corpus re-run at full cost.
-LLM_PROMPT_VERSION = "v0.1"
+# v0.2 (2026-05-31): adds behavioral-WTP facets (workaround_effort, time_cost,
+# solution_seeking). Lockstep with FACET_FIELDS — the schema_fingerprint changed,
+# so the importer refuses files generated against v0.1. Green-field corpus
+# re-faceted at v0.2; old corpus stays v0.1 and resolves via best-version reader.
+LLM_PROMPT_VERSION = "v0.2"
 
 # ---------------------------------------------------------------------------
 # Phase 4 — niche scoring from pain_facets
@@ -531,10 +535,14 @@ BUYER_SIDE_OPERATOR_ROLES = {"individual_contributor", "manager"}  # feel the pa
 # the OFF-DIAGONAL: high latent demand + low saturation = the green-field
 # quadrant the would_pay-driven scorer is blind to. DISPLAY-ONLY this pass (no
 # rank effect), mirroring how saturation shipped before W4-1.
-LATENT_DEMAND_WEIGHTS = {       # must sum to 1.0 so the score lands in [0,1]
-    "manual_workaround": 0.5,   # strongest behavioral signal (effort = revealed WTP)
-    "urgency":           0.3,
-    "dollar_present":    0.2,
+LATENT_DEMAND_WEIGHTS = {       # blended over PRESENT sub-signals (renormalized),
+                                # so v0.1 facets (missing the v0.2 fields) still score
+    "workaround_effort": 0.35,  # v0.2 field; manual=0.6 / hired=1.0. Falls back to
+                                # current_solution manual-term match on v0.1 facets.
+    "time_cost":         0.20,  # v0.2 field; light/moderate/heavy
+    "solution_seeking":  0.20,  # v0.2 field; asking/evaluating/switching
+    "urgency":           0.15,
+    "dollar_present":    0.10,
 }
 LATENT_DEMAND_TAG_THRESHOLD = 0.40   # 💡 tag + green-field eligibility floor
 GREENFIELD_SATURATION_CEILING = 0.20 # saturation must be BELOW this for off-diagonal

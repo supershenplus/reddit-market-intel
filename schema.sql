@@ -132,6 +132,11 @@ CREATE TABLE IF NOT EXISTS pain_facets (
     urgency TEXT,
     buyer_role TEXT,
     market_size_signal TEXT,
+    -- v0.2 behavioral-WTP fields (2026-05-31): explicit probes for latent
+    -- demand in markets that don't verbalize would_pay (analysis/latent_demand.py).
+    workaround_effort TEXT,
+    time_cost TEXT,
+    solution_seeking TEXT,
     confidence REAL,
     raw_response TEXT,
     model TEXT,

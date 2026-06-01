@@ -70,12 +70,26 @@ FACET_FIELDS = [
      "null when unclear"),
     ("market_size_signal", "str | null",
      "one of: enterprise | smb | prosumer | hobbyist; null when unclear"),
+    ("workaround_effort", "str | null",
+     "what the author does about the pain BEYOND naming a tool: none | manual "
+     "(DIY / spreadsheet / by hand) | hired (pays a person/VA/contractor/agency); "
+     "null when unclear. This is behavioral willingness-to-pay — effort or money "
+     "already being spent on the problem."),
+    ("time_cost", "str | null",
+     "ongoing time burden of the pain: none | light | moderate | heavy (hours per "
+     "week, or a dedicated person); null when not discernible"),
+    ("solution_seeking", "str | null",
+     "active demand behavior: none | asking (requests recommendations) | evaluating "
+     "(comparing specific tools) | switching (leaving an incumbent); null when unclear"),
     ("confidence", "float",
      "your self-rated confidence in this extraction, 0.0-1.0"),
 ]
 
 _VALID_WTP = {"would_pay", "hesitant", "no_signal"}
 _VALID_URGENCY = {"blocking", "recurring", "nice_to_have", "none"}
+_VALID_WORKAROUND = {"none", "manual", "hired"}
+_VALID_TIME_COST = {"none", "light", "moderate", "heavy"}
+_VALID_SOLUTION_SEEKING = {"none", "asking", "evaluating", "switching"}
 _VALID_DOMAINS = {
     "b2b_saas", "vertical_saas", "dev_tools", "marketing", "freelance",
     "ecommerce", "property", "construction", "services", "automation",
@@ -404,6 +418,15 @@ def _validate_and_normalize(facet: dict, prompt_version: str) -> dict:
     dom = facet.get("domain")
     if dom and dom not in _VALID_DOMAINS:
         dom = "other"
+    # v0.2 behavioral fields — nullable + optional. Coerce an unrecognized enum
+    # to None rather than raise: a single off-value on an optional field must not
+    # fail a whole batch import (these are softer signals than wtp/urgency).
+    work = facet.get("workaround_effort")
+    work = work if work in _VALID_WORKAROUND else None
+    tcost = facet.get("time_cost")
+    tcost = tcost if tcost in _VALID_TIME_COST else None
+    seeking = facet.get("solution_seeking")
+    seeking = seeking if seeking in _VALID_SOLUTION_SEEKING else None
     return {
         "post_id": int(facet["post_id"]),
         "prompt_version": prompt_version,
@@ -418,5 +441,8 @@ def _validate_and_normalize(facet: dict, prompt_version: str) -> dict:
         "urgency": urg,
         "buyer_role": facet.get("buyer_role"),
         "market_size_signal": facet.get("market_size_signal"),
+        "workaround_effort": work,
+        "time_cost": tcost,
+        "solution_seeking": seeking,
         "confidence": facet.get("confidence"),
     }

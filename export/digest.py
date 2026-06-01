@@ -168,9 +168,7 @@ class DigestWriter:
         )
         candidates = []
         for cl in self.db.get_clusters_for_niching(min_post_count=GREENFIELD_MIN_FACETS):
-            facets = self.db.get_facets_for_cluster_at_version(
-                cl["id"], LLM_PROMPT_VERSION,
-            )
+            facets = self.db.get_facets_for_cluster_best_version(cl["id"])
             eligible = filter_eligible(facets)
             if len(eligible) < GREENFIELD_MIN_FACETS:
                 continue
@@ -214,11 +212,13 @@ class DigestWriter:
         for ld, cl, ld_bd, sat_bd, buyer_bd, n in candidates:
             label = (cl.get("label") or "(unlabeled)").strip()
             gate = buyer_bd.get("gate_state", "?")
+            tc_n = ld_bd.get("time_cost_n", 0)
             lines.append(
                 f"- **{label[:70]}** — latent-demand {ld:.2f} "
-                f"(manual {ld_bd['manual_count']}/{n}, "
+                f"(workaround {ld_bd['workaround_count']}/{n}, "
                 f"urgency {ld_bd['urgency_mean']:.2f}, "
-                f"$ {ld_bd['dollar_present_frac']:.0%}) · "
+                f"$ {ld_bd['dollar_present_frac']:.0%}, "
+                f"v0.2-fields {tc_n}/{n}) · "
                 f"saturation {sat_bd['distinct_count']} tools · "
                 f"buyer-gate: {gate}"
             )
@@ -240,14 +240,10 @@ class DigestWriter:
             # Phase 3 veto: skip pain_points where the current-version LLM
             # facet says is_pain_point=0. Pre-Phase-3 rows (no facet) survive.
             all_pps.extend(
-                self.db.get_pain_points_for_cluster_unvetoed(
-                    c["id"], LLM_PROMPT_VERSION,
-                )
+                self.db.get_pain_points_for_cluster_unvetoed(c["id"])
             )
             all_facets.extend(
-                self.db.get_facets_for_cluster_at_version(
-                    c["id"], LLM_PROMPT_VERSION,
-                )
+                self.db.get_facets_for_cluster_best_version(c["id"])
             )
         if not all_pps:
             # Empty niche still gets the verdict UX — operator can kill it

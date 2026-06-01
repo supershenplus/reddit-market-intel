@@ -1,4 +1,5 @@
-"""Tests for analysis/latent_demand.py — the behavioral latent-demand signal (v4)."""
+"""Tests for analysis/latent_demand.py — behavioral latent-demand (v4 signal,
+v0.2 facets). Version-tolerant: blends over present sub-signals, renormalized."""
 
 import json
 
@@ -7,7 +8,10 @@ import pytest
 from analysis.latent_demand import compute_latent_demand_score
 
 # Mirror config defaults.
-WEIGHTS = {"manual_workaround": 0.5, "urgency": 0.3, "dollar_present": 0.2}
+WEIGHTS = {
+    "workaround_effort": 0.35, "time_cost": 0.20, "solution_seeking": 0.20,
+    "urgency": 0.15, "dollar_present": 0.10,
+}
 MANUAL = {
     "spreadsheet", "excel", "google sheet", "manual", "by hand",
     "pen and paper", "paper", "notebook", "hired", "outsourc",
@@ -15,7 +19,8 @@ MANUAL = {
 }
 
 
-def _facet(is_pain_point=1, current_solution=None, urgency=None, dollar=None):
+def _facet(is_pain_point=1, current_solution=None, urgency=None, dollar=None,
+           workaround_effort=None, time_cost=None, solution_seeking=None):
     f = {"is_pain_point": is_pain_point}
     if current_solution is not None:
         f["current_solution"] = current_solution
@@ -23,6 +28,12 @@ def _facet(is_pain_point=1, current_solution=None, urgency=None, dollar=None):
         f["urgency"] = urgency
     if dollar is not None:
         f["max_dollar_anchor"] = dollar
+    if workaround_effort is not None:
+        f["workaround_effort"] = workaround_effort
+    if time_cost is not None:
+        f["time_cost"] = time_cost
+    if solution_seeking is not None:
+        f["solution_seeking"] = solution_seeking
     return f
 
 
@@ -33,110 +44,123 @@ def _score(facets):
 # --- veto filter ----------------------------------------------------------
 
 class TestVetoFilter:
-    def test_vetoed_facets_dropped(self):
-        facets = [_facet(is_pain_point=0, current_solution="spreadsheet",
-                         urgency="blocking", dollar=500)]
-        score, bd = _score(facets)
+    def test_vetoed_dropped(self):
+        score, bd = _score([_facet(is_pain_point=0, workaround_effort="hired",
+                                   urgency="blocking", dollar=500)])
         assert score == 0.0
         assert bd["eligible_count"] == 0
 
-    def test_empty_facets(self):
+    def test_empty(self):
         score, bd = _score([])
         assert score == 0.0
-        assert bd["manual_count"] == 0
+        assert bd["workaround_count"] == 0
 
 
-# --- the critical split: manual workaround vs "nothing" -------------------
+# --- v0.2 workaround_effort field -----------------------------------------
 
-class TestManualWorkaroundSplit:
-    def test_spreadsheet_counts(self):
-        _, bd = _score([_facet(current_solution="spreadsheet")])
-        assert bd["manual_count"] == 1
-        assert bd["manual_workaround_frac"] == 1.0
+class TestWorkaroundField:
+    def test_manual_and_hired_values(self):
+        # manual=0.6, hired=1.0 → mean 0.8.
+        _, bd = _score([_facet(workaround_effort="manual"),
+                        _facet(workaround_effort="hired")])
+        assert bd["workaround_mean"] == pytest.approx(0.8)
+        assert bd["workaround_count"] == 2
 
-    def test_nothing_does_not_count(self):
-        # "nothing"/"none" are genuine no-signal — must NOT count as workaround.
-        _, bd = _score([
-            _facet(current_solution="nothing"),
-            _facet(current_solution="none"),
-            _facet(current_solution=None),
-        ])
-        assert bd["manual_count"] == 0
-        assert bd["manual_workaround_frac"] == 0.0
+    def test_none_counts_as_zero_not_dropped(self):
+        # workaround_effort='none' is a real signal (no effort) → 0.0, in the mean.
+        _, bd = _score([_facet(workaround_effort="none")])
+        assert bd["workaround_mean"] == 0.0
+        assert bd["workaround_count"] == 0
 
-    def test_named_tool_does_not_count(self):
-        # An incumbent SaaS tool is saturation evidence, not latent demand.
-        _, bd = _score([_facet(current_solution="Procore"),
-                        _facet(current_solution="QuickBooks")])
-        assert bd["manual_count"] == 0
-
-    def test_substring_match_multiword(self):
-        # "excel spreadsheets", "manual process", "hired a VA" should all match.
-        _, bd = _score([
-            _facet(current_solution="excel spreadsheets"),
-            _facet(current_solution="a manual process"),
-            _facet(current_solution="hired a part-time bookkeeper"),
-        ])
-        assert bd["manual_count"] == 3
-
-    def test_case_insensitive(self):
-        _, bd = _score([_facet(current_solution="SPREADSHEET")])
-        assert bd["manual_count"] == 1
+    def test_field_takes_precedence_over_current_solution(self):
+        # v0.2 field present → current_solution ignored.
+        _, bd = _score([_facet(workaround_effort="hired",
+                               current_solution="nothing")])
+        assert bd["workaround_mean"] == 1.0
 
 
-# --- urgency + dollar sub-signals -----------------------------------------
+# --- v0.1 fallback via current_solution -----------------------------------
 
-class TestUrgencyAndDollar:
-    def test_urgency_mean(self):
-        facets = [_facet(urgency="blocking"), _facet(urgency="recurring")]
-        _, bd = _score(facets)
-        assert bd["urgency_mean"] == pytest.approx((1.0 + 0.7) / 2)
+class TestWorkaroundFallback:
+    def test_manual_term_maps_to_manual(self):
+        _, bd = _score([_facet(current_solution="excel spreadsheets")])
+        assert bd["workaround_mean"] == pytest.approx(0.6)
+        assert bd["workaround_count"] == 1
 
-    def test_urgency_none_value_zero(self):
-        _, bd = _score([_facet(urgency="none")])
-        assert bd["urgency_mean"] == 0.0
+    def test_named_tool_is_zero(self):
+        _, bd = _score([_facet(current_solution="Procore")])
+        assert bd["workaround_mean"] == 0.0
+        assert bd["workaround_count"] == 0
 
-    def test_unknown_urgency_ignored(self):
-        # Facet with no urgency field doesn't drag the mean to 0.
-        facets = [_facet(urgency="blocking"), _facet()]
-        _, bd = _score(facets)
-        assert bd["urgency_mean"] == 1.0
+    def test_null_current_solution_dropped(self):
+        # No workaround signal at all → workaround sub-signal absent (mean 0 in
+        # breakdown display, but dropped from the blend denominator).
+        score, bd = _score([_facet(current_solution=None, urgency="blocking")])
+        assert bd["workaround_count"] == 0
+        # workaround dropped (no signal); present = urgency(1.0) + dollar(0.0, always
+        # present). score = (0.15*1.0 + 0.10*0.0)/(0.15+0.10) = 0.15/0.25 = 0.6
+        assert score == pytest.approx(0.6)
 
+
+# --- v0.2-only sub-signals (drop when absent) -----------------------------
+
+class TestTimeCostAndSeeking:
+    def test_time_cost_mapping_and_count(self):
+        _, bd = _score([_facet(time_cost="heavy"), _facet(time_cost="light")])
+        assert bd["time_cost_mean"] == pytest.approx((1.0 + 0.3) / 2)
+        assert bd["time_cost_n"] == 2
+
+    def test_solution_seeking_mapping(self):
+        # switching=1.0, evaluating=1.0, asking=0.6
+        _, bd = _score([_facet(solution_seeking="switching"),
+                        _facet(solution_seeking="asking")])
+        assert bd["solution_seeking_mean"] == pytest.approx(0.8)
+        assert bd["solution_seeking_n"] == 2
+
+    def test_absent_v02_fields_dropped_from_blend(self):
+        # A pure-urgency v0.1 facet: time_cost/solution_seeking absent → they must
+        # NOT drag the score toward 0. Score should equal the urgency value.
+        score, bd = _score([_facet(urgency="recurring")])
+        assert bd["time_cost_n"] == 0
+        assert bd["solution_seeking_n"] == 0
+        # present sub-signals: urgency(0.7) + dollar(0.0, always present).
+        # score = (0.15*0.7 + 0.10*0.0)/(0.15+0.10) = 0.105/0.25 = 0.42
+        assert score == pytest.approx(0.42)
+
+
+# --- dollar (always present) ----------------------------------------------
+
+class TestDollar:
     def test_dollar_present_frac(self):
-        facets = [_facet(dollar=500), _facet(dollar=0), _facet(dollar=None),
-                  _facet(dollar=1200)]
-        _, bd = _score(facets)
-        assert bd["dollar_present_frac"] == 0.5  # 2 of 4 positive
+        _, bd = _score([_facet(dollar=500), _facet(dollar=0),
+                        _facet(dollar=None), _facet(dollar=1200)])
+        assert bd["dollar_present_frac"] == 0.5
 
 
-# --- composite score ------------------------------------------------------
+# --- composite + renormalization ------------------------------------------
 
-class TestCompositeScore:
-    def test_all_signals_max(self):
-        # Every facet: manual workaround, blocking urgency, $ present → 1.0.
-        facets = [_facet(current_solution="spreadsheet", urgency="blocking",
-                         dollar=1000) for _ in range(3)]
-        score, _ = _score(facets)
+class TestComposite:
+    def test_full_v02_max(self):
+        f = _facet(workaround_effort="hired", time_cost="heavy",
+                   solution_seeking="switching", urgency="blocking", dollar=1000)
+        score, _ = _score([f])
         assert score == pytest.approx(1.0)
 
-    def test_no_signals_zero(self):
-        facets = [_facet(current_solution="nothing", urgency="none") for _ in range(3)]
-        score, _ = _score(facets)
-        assert score == 0.0
+    def test_v01_facet_renormalizes(self):
+        # current_solution manual (0.6), urgency recurring (0.7), no dollar (0.0),
+        # no v0.2 fields. Present: workaround(0.35), urgency(0.15), dollar(0.10).
+        # score = (0.35*0.6 + 0.15*0.7 + 0.10*0.0)/0.60 = 0.315/0.60 = 0.525
+        score, _ = _score([_facet(current_solution="manual", urgency="recurring")])
+        assert score == pytest.approx(0.525)
 
-    def test_weighted_blend(self):
-        # manual=1.0, urgency=0.7(recurring), dollar=0 → 0.5*1 + 0.3*0.7 + 0.2*0
-        facets = [_facet(current_solution="manual", urgency="recurring")]
-        score, _ = _score(facets)
-        assert score == pytest.approx(0.5 + 0.3 * 0.7)
-
-    def test_score_bounded(self):
-        score, _ = _score([_facet(current_solution="spreadsheet",
+    def test_bounded(self):
+        score, _ = _score([_facet(workaround_effort="hired", time_cost="heavy",
+                                  solution_seeking="evaluating",
                                   urgency="blocking", dollar=99999)])
         assert 0.0 <= score <= 1.0
 
 
-# --- score_niche integration: latent_demand in breakdown, NO rank change --
+# --- score_niche integration: in breakdown, display-only ------------------
 
 class TestScoreNicheDisplayOnly:
     def _facets(self, **kw):
@@ -154,16 +178,25 @@ class TestScoreNicheDisplayOnly:
     def test_latent_demand_in_breakdown(self):
         from analysis.niche_scorer import score_niche
 
-        _rev, _comp, _rank, bd, _ = score_niche(self._facets(), 12, 0.3)
+        _r, _c, _rank, bd, _ = score_niche(self._facets(), 12, 0.3)
         assert "latent_demand" in bd
         assert bd["latent_demand"]["score"] > 0
-        assert bd["latent_demand"]["manual_count"] == 4
+        assert bd["latent_demand"]["workaround_count"] == 4
+
+    def test_v02_field_lifts_latent_demand(self):
+        from analysis.niche_scorer import score_niche
+
+        v01 = self._facets()  # current_solution spreadsheet only
+        v02 = self._facets(workaround_effort="hired", time_cost="heavy",
+                           solution_seeking="switching")
+        _, _, _, bd01, _ = score_niche(v01, 12, 0.3)
+        _, _, _, bd02, _ = score_niche(v02, 12, 0.3)
+        assert bd02["latent_demand"]["score"] > bd01["latent_demand"]["score"]
 
     def test_rank_unaffected_by_latent_demand(self):
-        # Display-only invariant. Vary ONLY current_solution (spreadsheet vs
-        # nothing): both are non-tool so saturation is identical, and
-        # current_solution feeds neither revenue nor complexity. Only
-        # latent_demand changes — so rank must be IDENTICAL.
+        # Vary ONLY current_solution (spreadsheet vs nothing) — both non-tool, so
+        # saturation identical and current_solution feeds neither revenue nor
+        # complexity. Only latent_demand changes → rank must be identical.
         from analysis.niche_scorer import score_niche
 
         high = self._facets(current_solution="spreadsheet")
@@ -172,5 +205,4 @@ class TestScoreNicheDisplayOnly:
         _, _, rank_zero, bd_zero, _ = score_niche(zero, 12, 0.3)
         assert bd_high["latent_demand"]["score"] > bd_zero["latent_demand"]["score"]
         assert rank_high == pytest.approx(rank_zero)
-        # latent_demand carries no penalty_multiplier — it cannot touch rank.
         assert "penalty_multiplier" not in bd_high["latent_demand"]

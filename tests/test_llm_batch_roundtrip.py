@@ -345,13 +345,20 @@ class TestDigestVeto:
         # But its only member was vetoed, so digest renders the "no members" tag
         assert "no member posts" in md
 
-    def test_facet_at_other_version_does_not_veto(self, db, monkeypatch):
-        # Veto written at v0.0 but current version is v0.1 → no veto applies
-        monkeypatch.setattr(llm_extractor, "LLM_PROMPT_VERSION", "v0.0")
+    def test_newest_version_facet_wins_veto(self, db):
+        # Best-version veto semantics: a veto facet is SUPERSEDED by a non-veto
+        # facet at a newer version for the same post. So the post surfaces — the
+        # digest reads each post's newest facet, not a fixed prompt version.
         post, _ = self._seed_full_chain(db, title="version_test", veto=True)
-        monkeypatch.setattr(llm_extractor, "LLM_PROMPT_VERSION", "v0.1")
-        # Also bump the digest's view of "current"
-        import export.digest as digest_mod
-        monkeypatch.setattr(digest_mod, "LLM_PROMPT_VERSION", "v0.1")
+        # Supersede with a newer non-veto facet. Copy the existing row (so we don't
+        # re-spell every metadata column), bump to a higher version, flip the flag.
+        row = dict(db.conn.execute(
+            "SELECT * FROM pain_facets WHERE post_id = ?", (post["id"],),
+        ).fetchone())
+        row.pop("id", None)
+        row["prompt_version"] = "v9.9"   # newest version present → wins
+        row["is_pain_point"] = 1
+        row["pain_summary"] = "real pain"
+        db.upsert_pain_facet(row)
         md = DigestWriter(db).generate(top_n=5)
         assert "no member posts" not in md

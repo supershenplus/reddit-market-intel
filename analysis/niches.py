@@ -16,7 +16,7 @@ from sentence_transformers import SentenceTransformer
 
 from analysis.niche_scorer import best_label_facet, score_niche
 from analysis.saturation import format_saturation_note
-from config import EMBEDDING_MODEL, LLM_PROMPT_VERSION
+from config import EMBEDDING_MODEL
 from storage.db import Database
 
 
@@ -153,7 +153,7 @@ class NicheBuilder:
         all_facets = []
         for c in all_clusters:
             all_facets.extend(
-                self.db.get_facets_for_cluster_at_version(c["id"], LLM_PROMPT_VERSION)
+                self.db.get_facets_for_cluster_best_version(c["id"])
             )
 
         opp_scores = [p["opportunity_score"] for p in all_pps if p.get("opportunity_score")]
@@ -227,7 +227,7 @@ def rescore_existing_niches(db: Database) -> dict:
             members_per_cluster.append((c, pps))
             all_pps.extend(pps)
             all_facets.extend(
-                db.get_facets_for_cluster_at_version(c["id"], LLM_PROMPT_VERSION)
+                db.get_facets_for_cluster_best_version(c["id"])
             )
         stable_key = compute_stable_key(members_per_cluster)
         post_count = sum((c["post_count"] or 0) for c in clusters)
