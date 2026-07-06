@@ -115,6 +115,16 @@ SEED_SUBREDDITS = {
     "probe_inspect_claims": [
         "homeinspection", "Homeinspections", "ClaimsAdjuster",
     ],
+    # 2026-07-05 dailyjapanese thesis — externally-sourced (the user's own
+    # iOS app for N5 learners, ~/Projects/DailyJapanese). RIM runs in
+    # validation mode here per the green-field closure: feature intel +
+    # positioning against incumbents, not niche discovery. Unknown sub
+    # names 404-skip in the scraper, so over-inclusion is safe.
+    "japanese_learning": [
+        "LearnJapanese", "LearnJapaneseNovice", "japanese", "Japaneselanguage",
+        "JLPT", "languagelearning", "WaniKani", "Anki", "duolingo",
+        "bunpro", "japaneseresources",
+    ],
 }
 
 # Scoring weights (must sum to 1.0)
@@ -818,6 +828,174 @@ FORZA_RELEVANCE_WEIGHTS = {
     "competitor_mention": 0.10,
 }
 
+# ---------------------------------------------------------------------------
+# DailyJapanese profile — first learning-app overlay (validation-mode thesis).
+# Product: the user's own iOS daily-habit app for JLPT N5 beginners
+# (~/Projects/DailyJapanese). Monetization is consumer freemium, so audience
+# reach stays the viability proxy (same ad/reach logic as gaming). The
+# question RIM answers here is NOT "should this exist" — it's being built —
+# but: what do N5 learners complain about in incumbents, which asks have no
+# tool attached, and where does the daily-habit angle land. Pattern parallel
+# to FORZA_* — copy this block for the next externally-sourced thesis.
+# ---------------------------------------------------------------------------
+
+DAILYJAPANESE_DOMAIN_KEYWORDS = [
+    # Japanese script in the text — strongest possible domain anchor
+    r"[぀-ゟ]",   # hiragana
+    r"[゠-ヿ]",   # katakana
+    # JLPT anchors — bare \bN[1-5]\b leaks (nitrogen, highways, phone models);
+    # anchor to exam/study vocab the way PI ratings anchor to tune bigrams.
+    r"\bJLPT\b",
+    r"\bN[1-5]\s*(?:level|exam|test|grammar|vocab(?:ulary)?|kanji|listening|reading|deck)\b",
+    r"\b(?:passed|taking|studying for|prep(?:ping)? for|failed)\s+(?:the\s+)?N[1-5]\b",
+    # Writing systems & study vocabulary
+    r"\bkanji\b", r"\bhiragana\b", r"\bkatakana\b", r"\bfurigana\b",
+    r"\bromaji\b", r"\bkeigo\b", r"\bpitch accent\b",
+    # Learning-Japanese bigrams (bare "japanese" far too leaky)
+    r"\b(?:learn|learning|study|studying)\s+japanese\b",
+    r"\bjapanese\s+(?:grammar|vocab(?:ulary)?|immersion|textbook|flashcards?|study|practice|listening|reading|speaking)\b",
+    # Textbooks & methods — proper nouns
+    r"\bgenki\b", r"\bminna no nihongo\b", r"\btae kim\b", r"\btobira\b",
+    r"\bremembering the kanji\b", r"\bRTK\b", r"\bcore\s*[26]k\b",
+    r"\bgraded readers?\b", r"\bsentence mining\b",
+    r"\bcomprehensible input\b", r"\bimmersion learning\b",
+    r"\banki decks?\b", r"\bsrs reviews?\b",
+]
+
+# App-market incumbents. Word-boundary matched case-insensitively — keep
+# entries multi-word or distinctive (no "Drops": bare English word).
+DAILYJAPANESE_COMPETITORS = [
+    "Duolingo", "Anki", "WaniKani", "Bunpro", "Renshuu", "LingoDeer",
+    "Memrise", "Busuu", "Pimsleur", "Rosetta Stone", "HelloTalk", "italki",
+    "Satori Reader", "NativShark", "MaruMori", "Migaku", "jpdb",
+    "Human Japanese", "Ringotan", "Kanji Study", "Todaii",
+]
+
+# Highest-topic-wins on multi-hit (parallels FORZA_TOPIC_PATTERNS). Habit &
+# motivation is deliberately the highest bucket — it's the product-defining
+# topic for a daily-habit app, so a post mixing "kanji" with "can't stay
+# consistent" should land there.
+DAILYJAPANESE_TOPIC_PATTERNS = {
+    1: [  # kanji & reading
+        r"\bkanji\b", r"\bfurigana\b", r"\bRTK\b", r"\bradicals?\b",
+        r"\bgraded readers?\b", r"\breading practice\b", r"\bwanikani\b",
+    ],
+    2: [  # grammar & textbooks
+        r"\bgrammar (?:point|structure|explanation)s?\b", r"\bparticles?\b",
+        r"\bgenki\b", r"\bminna no nihongo\b", r"\btae kim\b", r"\btobira\b",
+        r"\bbunpro\b", r"\bconjugat(?:e|ion|ions)\b",
+    ],
+    3: [  # vocab & SRS
+        r"\banki\b", r"\bSRS\b", r"\bspaced repetition\b", r"\bflashcards?\b",
+        r"\bcore\s*[26]k\b", r"\bvocab(?:ulary)? (?:list|deck|app)s?\b",
+        r"\bsentence mining\b", r"\bjpdb\b",
+    ],
+    4: [  # listening & speaking
+        r"\blistening (?:practice|comprehension)\b", r"\bshadowing\b",
+        r"\bpitch accent\b", r"\bspeaking practice\b", r"\bitalki\b",
+        r"\bimmersion\b", r"\bcomprehensible input\b",
+    ],
+    5: [  # habit, routine & motivation — DailyJapanese's home turf
+        r"\bstudy (?:plan|routine|schedule|habit)s?\b", r"\bstreaks?\b",
+        r"\bburn(?:ed|t)? out\b", r"\bstay(?:ing)? (?:motivated|consistent)\b",
+        r"\bmotivation\b", r"\bconsistency\b", r"\bfell off\b",
+        r"\bwhere (?:do|should) i (?:start|begin)\b",
+        r"\bdaily (?:practice|study|reviews?|habit)\b",
+        r"\b\d+ minutes? a day\b",
+    ],
+}
+
+DAILYJAPANESE_TOPIC_LABELS = {
+    1: "Kanji & reading",
+    2: "Grammar & textbooks",
+    3: "Vocab & SRS",
+    4: "Listening & speaking",
+    5: "Habit & motivation",
+}
+
+DAILYJAPANESE_LEARNER_PATTERNS = {
+    "n5_beginner": [
+        r"\bN5\b", r"\b(?:complete|absolute|total) beginner\b",
+        r"\bjust start(?:ed|ing)\b", r"\bnew to japanese\b",
+        r"\bwhere (?:do|should) i (?:start|begin)\b",
+        r"\bday (?:one|1)\b", r"\bfirst (?:week|month) of\b",
+    ],
+    "advanced": [
+        r"\bN[12]\b", r"\bfluent\b", r"\bliving in japan\b",
+        r"\bnative (?:content|material)s?\b",
+    ],
+    "intermediate": [
+        r"\bN[34]\b", r"\bintermediate\b", r"\bplateau\b",
+        r"\bfinished genki\b",
+    ],
+    "casual_anime": [
+        r"\b(?:watch|understand) anime\b", r"\bwithout subtitles\b",
+        r"\bcasual(?:ly)? (?:learn|study)(?:ing)?\b",
+        r"\bjust for (?:fun|anime)\b", r"\bmanga in japanese\b",
+    ],
+}
+
+# ICP weighting: DailyJapanese targets the N5 beginner building a daily
+# habit. Casual anime-motivated learners convert well to habit apps (0.9);
+# intermediates partially fit; advanced learners have outgrown the product.
+DAILYJAPANESE_LEARNER_MULTIPLIERS = {
+    "n5_beginner":  1.0,
+    "casual_anime": 0.9,
+    "intermediate": 0.85,
+    "advanced":     0.6,
+}
+
+# WTP hint — consumer-freemium analog of GAMING_PATREON_PATTERNS. NOT a
+# gate; small positive multiplier when someone volunteers willingness to
+# pay for a learning app.
+DAILYJAPANESE_WTP_PATTERNS = [
+    r"\b(?:would|happy to|willing to|gladly) pay\b",
+    r"\blifetime (?:deal|purchase|sub(?:scription)?)\b",
+    r"\bpremium (?:version|tier|subscription|features?)\b",
+    r"\bpaid (?:version|tier|app)\b",
+    r"\bworth (?:the|every) (?:money|penny|cent|subscription)\b",
+    r"\b(?:monthly|annual|yearly) subscription\b",
+]
+
+# Kill the post's relevance: demand pointed away from apps entirely
+# (the no-app purist take). Parallel to GAMING_KILL_PATTERNS' "publisher
+# should add this" — the asker isn't a future app user.
+DAILYJAPANESE_KILL_PATTERNS = [
+    r"\byou don'?t need (?:an app|apps|any apps?)\b",
+    r"\bjust (?:immerse|use a textbook|read native material)\b",
+    r"\bapps? (?:are|is) (?:a )?(?:waste|crutch|useless|gimmick)\b",
+    r"\bditch(?:ed)? (?:the )?apps?\b",
+    r"\bstop using apps\b",
+    r"\bapps? won'?t (?:teach|get) you\b",
+]
+
+# Urgency — exam dates and Japan trips are the deadline pressure that
+# converts browsers into daily users.
+DAILYJAPANESE_URGENCY_PATTERNS = [
+    r"\bJLPT (?:in|this) (?:july|december|\d+\s*(?:weeks?|months?))\b",
+    r"\bregistered for (?:the )?JLPT\b",
+    r"\b(?:exam|test) (?:is )?(?:in|next) (?:\d+\s*)?(?:weeks?|months?|month)\b",
+    r"\b(?:moving|trip|going|traveling|travelling) to japan\b",
+    r"\bvisiting japan\b",
+]
+
+# Score component weights (sum = 1.0) — mirrors FORZA_RELEVANCE_WEIGHTS.
+DAILYJAPANESE_RELEVANCE_WEIGHTS = {
+    "domain_hit":         0.30,
+    "tool_request":       0.25,
+    "diy_evidence":       0.20,
+    "audience_reach":     0.15,
+    "competitor_mention": 0.10,
+}
+
+# Reach ceiling recalibrated for language-learning subs: r/LearnJapanese
+# ~800K, r/languagelearning ~1.9M, r/duolingo ~1M.
+DAILYJAPANESE_AUDIENCE_REACH_CEILING = 1_000_000
+
+# Multipliers applied AFTER weighted score sum (WTP bonus / purist kill).
+DAILYJAPANESE_WTP_MULTIPLIER  = 1.10
+DAILYJAPANESE_KILL_MULTIPLIER = 0.5
+
 # Profile overlays — selected via `--profile` CLI flag on export
 PROFILES = {
     "lienclear": {
@@ -842,6 +1020,18 @@ PROFILES = {
         "boost_subs": {
             "forza", "ForzaHorizon", "forzahorizon6", "forzahorizon5",
             "ForzaMotorsport", "forzahorizon4", "simracing",
+        },
+    },
+    "dailyjapanese": {
+        "min_relevance": 0.25,            # matches forza — fresh corpus is thin
+        "strong_relevance": 0.40,
+        "min_cluster_posts": 2,
+        "rank_by": "dailyjapanese_relevance",
+        "include_tool_gap_section": True,
+        "boost_subs": {
+            "LearnJapanese", "LearnJapaneseNovice", "japanese",
+            "Japaneselanguage", "JLPT", "WaniKani", "bunpro",
+            "japaneseresources",
         },
     },
 }

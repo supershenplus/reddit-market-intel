@@ -38,6 +38,7 @@ from analysis.market_signals import (
     compute_market_size_score,
     compute_lienclear_relevance,
     compute_forza_relevance,
+    compute_dailyjapanese_relevance,
 )
 from analysis.clustering import PainPointClusterer
 from analysis.niches import NicheBuilder
@@ -64,8 +65,9 @@ console = Console()
 # Adding a profile here + a key in config.PROFILES + a *Renderer in
 # export/report.py is the full surface for a new thesis.
 DEEP_PROFILE_RELEVANCE = {
-    "lienclear": lambda title, body, sub, subs: compute_lienclear_relevance(title, body, sub),
-    "forza":     lambda title, body, sub, subs: compute_forza_relevance(title, body, sub, subs),
+    "lienclear":     lambda title, body, sub, subs: compute_lienclear_relevance(title, body, sub),
+    "forza":         lambda title, body, sub, subs: compute_forza_relevance(title, body, sub, subs),
+    "dailyjapanese": lambda title, body, sub, subs: compute_dailyjapanese_relevance(title, body, sub, subs),
 }
 
 

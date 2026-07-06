@@ -36,6 +36,18 @@ from config import (
     FORZA_PLAYER_PATTERNS,
     FORZA_PLAYER_MULTIPLIERS,
     FORZA_RELEVANCE_WEIGHTS,
+    DAILYJAPANESE_DOMAIN_KEYWORDS,
+    DAILYJAPANESE_COMPETITORS,
+    DAILYJAPANESE_TOPIC_PATTERNS,
+    DAILYJAPANESE_LEARNER_PATTERNS,
+    DAILYJAPANESE_LEARNER_MULTIPLIERS,
+    DAILYJAPANESE_RELEVANCE_WEIGHTS,
+    DAILYJAPANESE_WTP_PATTERNS,
+    DAILYJAPANESE_KILL_PATTERNS,
+    DAILYJAPANESE_URGENCY_PATTERNS,
+    DAILYJAPANESE_AUDIENCE_REACH_CEILING,
+    DAILYJAPANESE_WTP_MULTIPLIER,
+    DAILYJAPANESE_KILL_MULTIPLIER,
 )
 
 _MONO_HIGH = [re.compile(p, re.IGNORECASE) for p in MONETIZATION_HIGH_KEYWORDS]
@@ -104,6 +116,37 @@ _FORZA_PLAYER_ORDER = ["sim_racer", "tuner", "livery_artist", "casual"]
 assert set(_FORZA_PLAYER_ORDER) == set(FORZA_PLAYER_PATTERNS) == set(FORZA_PLAYER_MULTIPLIERS), (
     "Forza player facets out of sync — _FORZA_PLAYER_ORDER, FORZA_PLAYER_PATTERNS "
     "and FORZA_PLAYER_MULTIPLIERS must share identical keys"
+)
+
+# Dailyjapanese-profile precompiled patterns. Tool-request and DIY intent
+# reuse the gaming base (_GAMING_TOOL_REQ / _GAMING_DIY) — those patterns
+# are app-agnostic ("is there an app…", "I made a spreadsheet…"); only the
+# WTP / kill / urgency layers are learning-specific.
+_DJ_DOMAIN = [re.compile(p, re.IGNORECASE) for p in DAILYJAPANESE_DOMAIN_KEYWORDS]
+_DJ_COMPETITORS = re.compile(
+    r"\b(" + "|".join(re.escape(c) for c in DAILYJAPANESE_COMPETITORS) + r")\b",
+    re.IGNORECASE,
+)
+_DJ_TOPICS = {
+    topic: [re.compile(p, re.IGNORECASE) for p in patterns]
+    for topic, patterns in DAILYJAPANESE_TOPIC_PATTERNS.items()
+}
+_DJ_LEARNERS = {
+    role: [re.compile(p, re.IGNORECASE) for p in patterns]
+    for role, patterns in DAILYJAPANESE_LEARNER_PATTERNS.items()
+}
+_DJ_WTP     = [re.compile(p, re.IGNORECASE) for p in DAILYJAPANESE_WTP_PATTERNS]
+_DJ_KILL    = [re.compile(p, re.IGNORECASE) for p in DAILYJAPANESE_KILL_PATTERNS]
+_DJ_URGENCY = [re.compile(p, re.IGNORECASE) for p in DAILYJAPANESE_URGENCY_PATTERNS]
+
+# Learner-level priority. Explicit N-level mentions are the most specific
+# signals: N5 first (ICP), then advanced (N1/N2 — explicit outgrow signal),
+# then intermediate; casual_anime last as the motivational catch-all.
+_DJ_LEARNER_ORDER = ["n5_beginner", "advanced", "intermediate", "casual_anime"]
+assert set(_DJ_LEARNER_ORDER) == set(DAILYJAPANESE_LEARNER_PATTERNS) == set(DAILYJAPANESE_LEARNER_MULTIPLIERS), (
+    "Dailyjapanese learner facets out of sync — _DJ_LEARNER_ORDER, "
+    "DAILYJAPANESE_LEARNER_PATTERNS and DAILYJAPANESE_LEARNER_MULTIPLIERS "
+    "must share identical keys"
 )
 
 
@@ -427,6 +470,132 @@ def compute_forza_relevance(
         multiplier *= GAMING_PATREON_MULTIPLIER
     if intent["kill_hit"]:
         multiplier *= GAMING_KILL_MULTIPLIER
+
+    out["score"] = round(max(0.0, min(1.0, raw_score * multiplier)), 4)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# DailyJapanese profile — learning-app overlay (validation-mode thesis).
+# See the DAILYJAPANESE_* block in config.py for the model rationale.
+# ---------------------------------------------------------------------------
+
+
+def classify_dailyjapanese_topic(title: str, body: str) -> int | None:
+    """Bucket a post into a DailyJapanese topic (1=kanji … 5=habit).
+
+    Highest-topic-wins on multi-hit (same convention as classify_forza_topic)
+    — habit & motivation is deliberately Topic 5 so a post mixing "kanji"
+    with "can't stay consistent" lands on the product-defining topic for a
+    daily-habit app. Returns None when no pattern matches; callers default
+    domain-hit posts to Topic 1 (kanji & reading).
+    """
+    text = f"{title} {body}".strip()
+    if not text:
+        return None
+    hit_topics = []
+    for topic, patterns in _DJ_TOPICS.items():
+        if any(p.search(text) for p in patterns):
+            hit_topics.append(topic)
+    return max(hit_topics) if hit_topics else None
+
+
+def compute_dailyjapanese_relevance(
+    title: str, body: str, subreddit: str, subscribers: int,
+) -> dict:
+    """Score how on-topic a post is for the DailyJapanese learning profile.
+
+    Parallel structure to compute_forza_relevance — reuses the app-agnostic
+    gaming-intent base (tool-request / DIY / urgency patterns) and composes
+    it with Japanese-learning domain matching, incumbent-app mentions,
+    learner-level classification, and learning-specific WTP / kill layers.
+    Audience reach uses the 1M language-learning ceiling. Without a
+    Japanese-learning domain hit the score is capped at 0.20 so generic
+    "is there an app" posts about other subjects can't clear the export
+    threshold.
+    """
+    text = f"{title} {body}".strip()
+    intent = compute_gaming_intent(title, body)
+    reach = min(1.0, subscribers / DAILYJAPANESE_AUDIENCE_REACH_CEILING) if subscribers else 0.0
+
+    out = {
+        "score": 0.0,
+        "domain_hit": False,
+        "domain_matches": [],
+        "topic": None,
+        "learner_level": None,
+        "competitor_mentions": [],
+        "tool_request_hit": intent["tool_request_hit"],
+        "tool_request_matches": intent["tool_request_matches"],
+        "diy_hit": intent["diy_hit"],
+        "diy_matches": intent["diy_matches"],
+        "wtp_hit": False,
+        "kill_hit": False,
+        "audience_reach": round(reach, 3),
+        "urgency_matches": [],
+    }
+    if not text:
+        return out
+
+    w = DAILYJAPANESE_RELEVANCE_WEIGHTS
+    components: dict[str, float] = {}
+
+    # Japanese-learning domain — required signal (same gate as forza).
+    domain_hits = sorted({m.group(0) for p in _DJ_DOMAIN for m in p.finditer(text)})
+    out["domain_hit"] = bool(domain_hits)
+    out["domain_matches"] = domain_hits
+    components["domain_hit"] = 1.0 if domain_hits else 0.0
+
+    # Tool-request — primary signal (every "is there an app for X" is a
+    # future DailyJapanese user).
+    components["tool_request"] = 1.0 if intent["tool_request_hit"] else 0.0
+
+    # DIY evidence — highest-conviction ICP signal (custom Anki decks /
+    # study spreadsheets = someone already doing the app's job by hand).
+    components["diy_evidence"] = 1.0 if intent["diy_hit"] else 0.0
+
+    # Audience reach — consumer-freemium viability proxy
+    components["audience_reach"] = reach
+
+    # Incumbent-app mentions — light positive (active app market = users
+    # who already pay attention to learning apps).
+    comp_hits = sorted({m.group(1) for m in _DJ_COMPETITORS.finditer(text)})
+    out["competitor_mentions"] = comp_hits
+    components["competitor_mention"] = min(1.0, len(comp_hits) * 0.5) if comp_hits else 0.0
+
+    # Topic + learner-level classification (facets, not weight components)
+    out["topic"] = classify_dailyjapanese_topic(title, body)
+    detected_level = None
+    for level in _DJ_LEARNER_ORDER:
+        if any(p.search(text) for p in _DJ_LEARNERS[level]):
+            detected_level = level
+            break
+    out["learner_level"] = detected_level
+
+    # Learning-specific intent layers
+    out["wtp_hit"] = any(p.search(text) for p in _DJ_WTP)
+    out["kill_hit"] = any(p.search(text) for p in _DJ_KILL)
+    out["urgency_matches"] = sorted({
+        m.group(0) for p in _DJ_URGENCY for m in p.finditer(text)
+    })
+
+    raw_score = sum(w[k] * v for k, v in components.items())
+
+    # Domain-hit gate — without Japanese-learning vocab, tool-request / DIY
+    # signals fit any subject. Cap so off-domain posts can't clear the
+    # export threshold while keeping the facet breakdown intact.
+    if not domain_hits:
+        raw_score = min(raw_score, 0.20)
+
+    # Multipliers — learner-level first (ICP weighting), then WTP bonus,
+    # then the no-app-purist kill penalty (which dominates).
+    multiplier = 1.0
+    if detected_level:
+        multiplier *= DAILYJAPANESE_LEARNER_MULTIPLIERS.get(detected_level, 1.0)
+    if out["wtp_hit"]:
+        multiplier *= DAILYJAPANESE_WTP_MULTIPLIER
+    if out["kill_hit"]:
+        multiplier *= DAILYJAPANESE_KILL_MULTIPLIER
 
     out["score"] = round(max(0.0, min(1.0, raw_score * multiplier)), 4)
     return out

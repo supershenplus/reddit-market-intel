@@ -8,12 +8,14 @@ from storage.db import Database
 from analysis.market_signals import (
     compute_lienclear_relevance, classify_lienclear_phase,
     compute_forza_relevance, classify_forza_topic,
+    compute_dailyjapanese_relevance, classify_dailyjapanese_topic,
 )
 
 try:
     from config import (
         PROFILES, LIENCLEAR_COMPETITORS, LIENCLEAR_PHASE_LABELS,
         FORZA_COMPETITORS, FORZA_TOPIC_LABELS,
+        DAILYJAPANESE_COMPETITORS, DAILYJAPANESE_TOPIC_LABELS,
     )
 except ImportError:  # pragma: no cover — defensive for partial configs
     PROFILES = {}
@@ -21,6 +23,8 @@ except ImportError:  # pragma: no cover — defensive for partial configs
     LIENCLEAR_PHASE_LABELS = {}
     FORZA_COMPETITORS = []
     FORZA_TOPIC_LABELS = {}
+    DAILYJAPANESE_COMPETITORS = []
+    DAILYJAPANESE_TOPIC_LABELS = {}
 
 
 class ProfileRenderer:
@@ -631,9 +635,297 @@ class ForzaRenderer(ProfileRenderer):
         return lines
 
 
+class DailyjapaneseRenderer(ProfileRenderer):
+    """Renderer for the DailyJapanese (learning-app validation) profile."""
+
+    def enrich_clusters(self, clusters, top_n):
+        min_rel = self.profile_cfg.get("min_relevance", 0.25)
+        strong_rel = self.profile_cfg.get("strong_relevance", 0.40)
+        min_posts = self.profile_cfg.get("min_cluster_posts", 2)
+        enriched = []
+        for c in clusters:
+            meta = self._aggregate_meta(c["id"])
+            rel = meta["avg_relevance"]
+            if rel >= strong_rel or (rel >= min_rel and (c["post_count"] or 0) >= min_posts):
+                enriched.append({**c, "_dj": meta})
+        enriched.sort(
+            key=lambda c: (c["_dj"]["avg_relevance"], c["avg_opportunity_score"] or 0),
+            reverse=True,
+        )
+        return enriched[:top_n]
+
+    def header_line(self):
+        return (
+            f"**Profile**: dailyjapanese — ranked by avg dailyjapanese_relevance, "
+            f"min {self.profile_cfg.get('min_relevance', 0.25):.2f}"
+        )
+
+    def gap_section(self, enriched_clusters):
+        if not self.profile_cfg.get("include_tool_gap_section"):
+            return []
+        return self._render_tool_gap_section(enriched_clusters)
+
+    def cluster_body_lines(self, cluster, subreddits):
+        dj = cluster.get("_dj", {})
+        lines = [
+            f"**DailyJapanese relevance**: {dj.get('avg_relevance', 0):.2f} | "
+            f"**Opportunity score**: {cluster['avg_opportunity_score']:.2f} | "
+            f"**Posts**: {cluster['post_count']}",
+            f"**Subreddits**: {', '.join(subreddits)}",
+        ]
+        lines.extend(self._render_facets(dj))
+        return lines
+
+    def domain_section(self, top_n):
+        min_rel = self.profile_cfg.get("min_relevance", 0.25)
+        return self._render_domain_section(min_rel, top_n)
+
+    # --- internal helpers ----------------------------------------------------
+
+    def _aggregate_meta(self, cluster_id: int) -> dict:
+        """Aggregate per-cluster DailyJapanese signal from matched_patterns blobs.
+
+        Mirrors ForzaRenderer._aggregate_meta — reads the `dailyjapanese` key
+        and rolls up topic / learner-level / competitor counts, tool-request /
+        DIY / WTP / kill rates, and avg audience reach.
+        """
+        cur = self.db.conn.execute(
+            "SELECT matched_patterns FROM pain_points WHERE cluster_id = ?",
+            (cluster_id,),
+        )
+        canonical = {c.lower(): c for c in DAILYJAPANESE_COMPETITORS}
+        relevances: list[float] = []
+        reaches: list[float] = []
+        topics: Counter = Counter()
+        levels: Counter = Counter()
+        competitors: Counter = Counter()
+        tool_req_hits = 0
+        diy_hits = 0
+        wtp_hits = 0
+        kill_hits = 0
+        domain_hits = 0
+        total = 0
+        for row in cur.fetchall():
+            total += 1
+            blob = row["matched_patterns"]
+            if not blob:
+                continue
+            try:
+                parsed = json.loads(blob)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            dj = parsed.get("dailyjapanese") if isinstance(parsed, dict) else None
+            if not dj:
+                continue
+            relevances.append(float(dj.get("score") or 0))
+            reach = dj.get("audience_reach")
+            if reach is not None:
+                reaches.append(float(reach))
+            if dj.get("topic") is not None:
+                topics[dj["topic"]] += 1
+            if dj.get("learner_level"):
+                levels[dj["learner_level"]] += 1
+            for comp in dj.get("competitor_mentions") or []:
+                key = comp.lower()
+                if key in canonical:
+                    competitors[canonical[key]] += 1
+            if dj.get("tool_request_hit"):
+                tool_req_hits += 1
+            if dj.get("diy_hit"):
+                diy_hits += 1
+            if dj.get("wtp_hit"):
+                wtp_hits += 1
+            if dj.get("kill_hit"):
+                kill_hits += 1
+            if dj.get("domain_hit"):
+                domain_hits += 1
+        avg_relevance = sum(relevances) / len(relevances) if relevances else 0.0
+        avg_reach = sum(reaches) / len(reaches) if reaches else 0.0
+        return {
+            "avg_relevance": avg_relevance,
+            "avg_audience_reach": avg_reach,
+            "post_count": total,
+            "domain_hit_rate": (domain_hits / total) if total else 0.0,
+            "tool_request_rate": (tool_req_hits / total) if total else 0.0,
+            "diy_rate": (diy_hits / total) if total else 0.0,
+            "wtp_count": wtp_hits,
+            "kill_count": kill_hits,
+            "topics": topics.most_common(),
+            "levels": levels.most_common(),
+            "competitors": competitors.most_common(),
+        }
+
+    def _render_facets(self, dj: dict) -> list[str]:
+        """Per-cluster DailyJapanese facet rendering (parallel to ForzaRenderer)."""
+        lines = []
+        if dj.get("topics"):
+            topic_strs = [
+                f"{DAILYJAPANESE_TOPIC_LABELS.get(t, str(t))} ({n})" for t, n in dj["topics"]
+            ]
+            lines.append("**Topics**: " + ", ".join(topic_strs))
+        if dj.get("levels"):
+            lines.append("**Learner levels**: " + ", ".join(f"{r} ({n})" for r, n in dj["levels"]))
+        if dj.get("competitors"):
+            lines.append("**Incumbent mentions**: " + ", ".join(f"{c} ({n})" for c, n in dj["competitors"]))
+        lines.append(f"**Tool-request rate**: {dj.get('tool_request_rate', 0):.0%}")
+        if dj.get("diy_rate", 0) > 0:
+            lines.append(f"**DIY-evidence rate**: {dj.get('diy_rate', 0):.0%}")
+        lines.append(
+            f"**Audience reach (avg)**: {dj.get('avg_audience_reach', 0):.0%} of 1M-sub ceiling"
+        )
+        if dj.get("wtp_count", 0):
+            lines.append(f"**WTP mentions**: {dj['wtp_count']}")
+        if dj.get("kill_count", 0):
+            rate = dj["kill_count"] / dj["post_count"] if dj.get("post_count") else 0
+            lines.append(
+                f"**⚠ Kill-signal posts**: {dj['kill_count']} ({rate:.0%}) — "
+                "no-app-purist demand"
+            )
+        return lines
+
+    def _render_tool_gap_section(self, enriched_clusters: list[dict]) -> list[str]:
+        """Tool-Gap section — asks with no incumbent app attached.
+
+        Same gate as ForzaRenderer: high tool-request signal, zero incumbent
+        mentions, low kill-signal rate. For DailyJapanese these are the
+        feature/positioning gaps incumbents leave open — candidate additions
+        to the app's roadmap rather than reasons to build something new.
+        """
+        candidates = []
+        for c in enriched_clusters:
+            dj = c.get("_dj") or {}
+            post_count = dj.get("post_count") or 0
+            if post_count == 0:
+                continue
+            kill_rate = (dj.get("kill_count") or 0) / post_count
+            if (
+                dj.get("tool_request_rate", 0) >= 0.40
+                and not dj.get("competitors")
+                and kill_rate < 0.25
+            ):
+                rank_score = dj.get("tool_request_rate", 0) * dj.get("avg_audience_reach", 0)
+                candidates.append((rank_score, c, dj))
+        if not candidates:
+            return []
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        lines = [
+            "## Tool-Gap Opportunities",
+            "",
+            "Clusters where learners are asking for a tool, no incumbent app was "
+            "mentioned in the discussion, and the demand isn't dominated by no-app-purist "
+            "advice. Ranked by tool-request rate × audience reach — top items are the "
+            "highest-leverage feature/positioning gaps for DailyJapanese.",
+            "",
+        ]
+        for i, (rank_score, c, dj) in enumerate(candidates[:10], 1):
+            subreddits = json.loads(c["subreddits"]) if c["subreddits"] else []
+            lines.append(
+                f"{i}. **{c['label']}** — "
+                f"tool-req {dj['tool_request_rate']:.0%} × reach {dj.get('avg_audience_reach', 0):.0%} "
+                f"= {rank_score:.2f}"
+            )
+            facets = []
+            if dj.get("topics"):
+                facets.append("Topics: " + ", ".join(
+                    DAILYJAPANESE_TOPIC_LABELS.get(t, str(t)) for t, _ in dj["topics"][:2]
+                ))
+            if subreddits:
+                facets.append(
+                    f"r/{subreddits[0]}"
+                    + (f" +{len(subreddits)-1}" if len(subreddits) > 1 else "")
+                )
+            if dj.get("diy_rate", 0) > 0:
+                facets.append(f"DIY {dj['diy_rate']:.0%}")
+            if facets:
+                lines.append(f"   - {' | '.join(facets)}")
+        lines.extend(["", "---", ""])
+        return lines
+
+    def _render_domain_section(self, min_rel: float, top_n: int) -> list[str]:
+        """Posts hitting Japanese-learning domain keywords, scored directly.
+
+        Parallel to ForzaRenderer._render_domain_section but partitioned by
+        DAILYJAPANESE_TOPIC_LABELS (kanji / grammar / vocab / listening /
+        habit). Recovers domain-hit posts the generic classifier dropped —
+        the complete raw learning signal in the corpus.
+        """
+        cur = self.db.conn.execute(
+            """SELECT p.reddit_id, p.title, p.body, p.subreddit, p.url, p.score,
+                      COALESCE(s.subscribers, 0) AS subscribers
+               FROM posts p
+               LEFT JOIN subreddits s ON s.name = p.subreddit"""
+        )
+        hits = []
+        for row in cur.fetchall():
+            dj = compute_dailyjapanese_relevance(
+                row["title"] or "", row["body"] or "",
+                row["subreddit"] or "", row["subscribers"] or 0,
+            )
+            if dj["domain_hit"] and dj["score"] >= min_rel:
+                topic = classify_dailyjapanese_topic(row["title"] or "", row["body"] or "") or 1
+                hits.append((row, dj, topic))
+        if not hits:
+            return []
+        hits_with_idx = [(h[1]["score"], i, h) for i, h in enumerate(hits)]
+        hits_with_idx.sort(reverse=True)
+        hits = [t[2] for t in hits_with_idx[:top_n]]
+
+        lines = [
+            "## Domain-Hit Posts (DailyJapanese)",
+            "",
+            "Posts whose text matches Japanese-learning domain keywords (kanji/JLPT/"
+            "genki/immersion/kana-script/etc), scored directly by "
+            "`compute_dailyjapanese_relevance` — independent of the generic pain-point "
+            "classifier. Partitioned by topic (highest-topic-wins on multi-hit; "
+            "domain-hit posts with no topic-pattern match default to Kanji & reading).",
+            "",
+        ]
+
+        buckets: dict[int, list] = {t: [] for t in sorted(DAILYJAPANESE_TOPIC_LABELS)}
+        for row, dj, topic in hits:
+            buckets.setdefault(topic, []).append((row, dj))
+
+        for topic in sorted(DAILYJAPANESE_TOPIC_LABELS):
+            bucket = buckets.get(topic) or []
+            if not bucket:
+                continue
+            label = DAILYJAPANESE_TOPIC_LABELS.get(topic, f"Topic {topic}")
+            lines.append(f"### {label} ({len(bucket)} post{'s' if len(bucket) != 1 else ''})")
+            lines.append("")
+            for i, (row, dj) in enumerate(bucket, 1):
+                title = (row["title"] or "(no title)")[:80]
+                lines.append(
+                    f"{i}. [r/{row['subreddit']}] \"{title}\" — "
+                    f"relevance {dj['score']:.2f} (↑ {row['score'] or 0})"
+                )
+                facets = []
+                if dj.get("learner_level"):
+                    facets.append(f"Level: {dj['learner_level']}")
+                if dj.get("competitor_mentions"):
+                    facets.append("Incumbents: " + ", ".join(dj["competitor_mentions"]))
+                if dj.get("tool_request_hit"):
+                    facets.append("Tool-request")
+                if dj.get("diy_hit"):
+                    facets.append("DIY")
+                if dj.get("wtp_hit"):
+                    facets.append("WTP-hint")
+                if dj.get("kill_hit"):
+                    facets.append("⚠ kill-signal")
+                if dj.get("urgency_matches"):
+                    facets.append("Urgency: " + ", ".join(dj["urgency_matches"][:2]))
+                if facets:
+                    lines.append(f"   - {' | '.join(facets)}")
+                lines.append(f"   - URL: {row['url'] or 'N/A'}")
+            lines.append("")
+
+        lines.extend(["---", ""])
+        return lines
+
+
 PROFILE_RENDERERS: dict[str, type[ProfileRenderer]] = {
     "lienclear": LienclearRenderer,
     "forza": ForzaRenderer,
+    "dailyjapanese": DailyjapaneseRenderer,
 }
 
 
